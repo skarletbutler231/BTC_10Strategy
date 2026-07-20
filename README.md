@@ -2,9 +2,11 @@
 
 A dashboard for backtesting candle-based BTC trading strategies, inspired by the
 TradeSmart video *"I Built a 10-Strategy System for Polymarket Trading."* Price
-data comes from **Binance** klines. The framework is built so you can drop in the
-other nine strategies over time — the dashboard renders each strategy's parameter
-form automatically from the backend schema.
+data is served from a **local SQLite database** of Binance candles (built once
+from Binance's public bulk archive), with a live-API fallback for the newest
+bars. The framework is built so you can drop in the other nine strategies over
+time — the dashboard renders each strategy's parameter form automatically from
+the backend schema.
 
 **Strategy #8 — Jump Exhaustion — is implemented** (the one you asked about).
 
@@ -19,8 +21,41 @@ cd /work/david/PolyMarket/03_BTC_10Strategy
 ```
 
 FastAPI + uvicorn are the only dependencies (already present system-wide here).
-Everything else — the Binance client, indicators, and backtest engine — is pure
-standard-library Python.
+Everything else — the Binance client, data store, indicators, and backtest
+engine — is pure standard-library Python.
+
+## Historical price data (local DB)
+
+Candles are served from a local **SQLite** database (`data/market.db`) instead of
+hitting the Binance REST API on every request. The DB stores **1-minute** OHLCV
+candles; higher intervals (5m, 15m, 1h, 1d, …) are **resampled from 1m on read**
+(byte-exact with Binance's own higher-interval klines).
+
+Build / update it from Binance's public
+[data.binance.vision](https://data.binance.vision) bulk archive — monthly zips,
+sha256-checksum-verified, no API key:
+
+```bash
+# full BTCUSDT 1m history (2017-08 → now): ~230 MB download, ~4.7M rows, ~320 MB DB, ~5 min
+python3 -m backend.data.ingest --symbol BTCUSDT --interval 1m --from 2017-08 --to now
+
+python3 -m backend.data.ingest --from 2024-01 --to 2024-06    # just a slice
+python3 -m backend.data.ingest --force                         # re-load everything
+```
+
+Ingestion is **idempotent and resumable**: completed months are logged and
+skipped, so re-running only fetches what's new (schedule it via cron to stay
+current). The current month — not yet published as a monthly zip — is pulled from
+Binance's daily archives automatically.
+
+Reads are a **hybrid**: history comes from the DB; if a request runs past the
+newest ingested candle (e.g. today, before the next ingest), the tail is fetched
+live from Binance and spliced on seamlessly. `GET /api/coverage?symbol=BTCUSDT`
+reports what's loaded (min/max time + row count).
+
+The DB is gitignored — rebuild it locally with the command above. Set `USE_DB=0`
+to bypass the DB and read directly from the Binance API (the original behaviour),
+and `MARKET_DB=/path/to.db` to point at a different file.
 
 ## Using the dashboard
 
@@ -80,7 +115,11 @@ nine remaining video strategies are listed as TODOs in that `__init__.py`.
 ```
 backend/
   main.py            FastAPI app + routes + static serving
+  store.py           DB-backed candle reader: resample-from-1m + live gap-fill
+  db.py              SQLite connection + schema (candles, ingest_log)
   binance.py         Binance klines (stdlib urllib, paginated, host fallback)
+  data/
+    ingest.py        bulk-loader: data.binance.vision zips -> SQLite (idempotent)
   indicators.py      ATR / RSI / rolling close extremes (pure Python)
   engine.py          backtest engine + shared Exit/Backtest params
   registry.py        strategy registry

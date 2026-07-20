@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from . import binance
 from . import registry
+from . import store
 from . import strategies  # noqa: F401 - registers strategies on import
 from .engine import EXIT_PARAM_GROUP, run_backtest
 
@@ -68,9 +69,10 @@ def _load_candles(symbol: str, interval: str, start: str, end: Optional[str]) ->
     if start_ms >= end_ms:
         raise HTTPException(400, "start must be before end")
     try:
-        candles = binance.fetch_klines(symbol, interval, start_ms, end_ms)
+        # DB-backed: history from SQLite (resampled from 1m), tail from Binance.
+        candles = store.get_candles(symbol, interval, start_ms, end_ms)
     except binance.BinanceError as e:
-        raise HTTPException(502, f"binance fetch failed: {e}")
+        raise HTTPException(502, f"candle load failed: {e}")
     if not candles:
         raise HTTPException(404, "no candles returned for that range/symbol")
     return candles
@@ -102,6 +104,14 @@ def _markers(candles: list, trades: list) -> list:
 @app.get("/api/health")
 def health():
     return {"ok": True, "strategies": [s.id for s in registry.all_strategies()]}
+
+
+@app.get("/api/coverage")
+def coverage(symbol: str = "BTCUSDT"):
+    """Ingested 1m coverage for a symbol (min/max unix seconds + row count)."""
+    cov = store.coverage(symbol)
+    return {"symbol": symbol.upper(), "interval": "1m",
+            "db_enabled": store.use_db(), **cov}
 
 
 @app.get("/api/strategies")
