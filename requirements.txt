@@ -1,0 +1,4 @@
+fastapi>=0.110
+uvicorn>=0.27
+# No other runtime deps: Binance access uses the stdlib (urllib) and all
+# indicators / the backtest engine are pure Python.

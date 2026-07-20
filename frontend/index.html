@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTC 10-Strategy Backtester</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/lightweight-charts.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">₿ <strong>BTC 10-Strategy</strong> <span class="muted">Backtester</span></div>
+    <div class="top-controls">
+      <label>Symbol
+        <input id="symbol" value="BTCUSDT" size="9" />
+      </label>
+      <label>Interval
+        <select id="interval">
+          <option>1m</option><option>3m</option><option selected>5m</option>
+          <option>15m</option><option>30m</option><option>1h</option>
+          <option>4h</option><option>1d</option>
+        </select>
+      </label>
+      <label>Start <input id="start" type="date" /></label>
+      <label>End <input id="end" type="date" /></label>
+      <button id="loadBtn" class="ghost">Load chart</button>
+      <button id="runBtn" class="primary">Run backtest</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="field">
+        <label class="block">Strategy</label>
+        <select id="strategy"></select>
+        <p id="stratDesc" class="muted small"></p>
+      </div>
+      <div class="field">
+        <label class="block">Preset</label>
+        <select id="preset"></select>
+      </div>
+      <div id="params"></div>
+    </aside>
+
+    <section class="content">
+      <div id="statusBar" class="status muted">Pick a range and run a backtest.</div>
+
+      <div id="stats" class="stats"></div>
+
+      <div class="chart-wrap">
+        <div id="chart"></div>
+      </div>
+
+      <div class="tables">
+        <div class="table-head">
+          <span>Trades</span>
+          <span id="tradeCount" class="muted small"></span>
+        </div>
+        <div class="table-scroll">
+          <table id="trades">
+            <thead>
+              <tr>
+                <th>#</th><th>Side</th><th>Entry time</th><th>Entry</th>
+                <th>Exit</th><th>Exit type</th><th>PnL %</th><th>Bars</th><th>Reason</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
