@@ -8,8 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**Three strategies are implemented: #4 — BB Squeeze, #8 — Jump Exhaustion, and
-#9 — CCI Williams.**
+**Four strategies are implemented: #4 — BB Squeeze, #7 — Volume Exhaustion,
+#8 — Jump Exhaustion, and #9 — CCI Williams.**
 
 ---
 
@@ -108,6 +108,49 @@ The top-bar **Mode** selector switches how signals are scored:
   BTC 5-min direction is close to a coin flip (~50%), so realistic edges are
   small — treat a few points above 50% as thin, not a sure thing. The BB Squeeze
   **Polymarket 5m (Reversion)** preset is tuned for this mode (interval 5m).
+
+## Volume Exhaustion (strategy #7)
+
+*Fade the climax bar.* A decisive bar printed on abnormally heavy volume is often
+the **end** of a move rather than the start of one — the crowd that wanted in has
+just piled in. Because BTC's raw volume grows by orders of magnitude across the
+history, "abnormal" is measured two scale-free ways at once: **relative volume**
+(bar volume ÷ its own rolling mean) and **volume percentile** (its rank inside a
+longer window, robust to a single outlier dragging that mean).
+
+| Group | Params |
+|-------|--------|
+| **Volume** | `vol_ma_length`, `vol_spike_mult` (× rolling avg), `vol_rank_lookback`, `vol_rank_min` (percentile gate; 0 disables) |
+| **Candle** | `min_body_ratio` (the bar must be decisive), `wick_min` (rejection wick; 0 disables) |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic` (With/Against), `ma_type` (SMA/EMA/WMA/RMA), `ma_length`, `source` |
+| **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
+
+### Polymarket presets
+
+Swept over the whole DB (936,841 5m bars, ~242k combinations), same admission
+rules as CCI Williams — win every calendar year, clear 53% in 2024-26 alone, be
+statistically significant:
+
+| Preset | Bets | Hit | 2024-26 bets | 2024-26 hit | z |
+|--------|-----:|----:|-------------:|------------:|--:|
+| **PM 5m Volume** | 64,894 | 54.52% | 19,494 | 53.07% | 23.0 |
+| **PM 5m Balanced** | 38,149 | 55.82% | 11,244 | 54.70% | 22.7 |
+| **PM 5m Selective** | 24,513 | 56.28% | 7,825 | 55.19% | 19.7 |
+| **PM 5m Hi Hit** | 9,415 | 56.40% | 1,772 | 57.51% | 12.4 |
+| **PM 5m Max Hit** | 1,062 | 57.16% | 230 | 66.09% | 4.7 |
+
+Two structural findings shaped these. **Reversion only** — of 9,221 combinations
+that passed the filters, *all* 9,221 were Reversion and none were Continuation;
+fading the climax is the edge, riding it is the same edge inverted. And
+**Against Trend helps** — only fading an up-climax while price is *above* the MA
+(and vice versa) stacks a second mean-reversion condition, worth about a point
+of hit rate at equal volume.
+
+⚠️ **Max Hit is the thinnest result in this repo** — z of 4.7 against 20+ for the
+others, ~120 bets/year, and its edge sits almost entirely in 2023-26. Treat it as
+a lead to validate rather than a settled edge. *Hi Hit* is the best
+risk-adjusted pick: worst year 52.2% at z=12.4.
 
 ## CCI Williams (strategy #9)
 
@@ -221,6 +264,7 @@ backend/
     jump_exhaustion.py
     bb_squeeze.py
     cci_williams.py
+    volume_exhaustion.py
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)

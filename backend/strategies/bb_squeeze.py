@@ -42,34 +42,8 @@ _DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
          "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
 _DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday",
                "Friday", "Saturday", "Sunday"]
-_MA_TYPES = ["SMA", "EMA", "WMA", "RMA"]
-_SOURCES = ["close", "open", "high", "low", "hl2", "hlc3", "ohlc4"]
-
-
-def _source_values(candles: List[dict], source: str) -> List[float]:
-    if source == "open":
-        return [c["open"] for c in candles]
-    if source == "high":
-        return [c["high"] for c in candles]
-    if source == "low":
-        return [c["low"] for c in candles]
-    if source == "hl2":
-        return [(c["high"] + c["low"]) / 2.0 for c in candles]
-    if source == "hlc3":
-        return [(c["high"] + c["low"] + c["close"]) / 3.0 for c in candles]
-    if source == "ohlc4":
-        return [(c["open"] + c["high"] + c["low"] + c["close"]) / 4.0 for c in candles]
-    return [c["close"] for c in candles]  # default: close
-
-
-def _ma(values: List[float], ma_type: str, length: int):
-    if ma_type == "EMA":
-        return ind.ema(values, length)
-    if ma_type == "WMA":
-        return ind.wma(values, length)
-    if ma_type == "RMA":
-        return ind.rma(values, length)
-    return ind.sma(values, length)  # SMA (default)
+_MA_TYPES = ind.MA_TYPES
+_SOURCES = ind.SOURCES
 
 
 class BBSqueeze(Strategy):
@@ -242,7 +216,8 @@ class BBSqueeze(Strategy):
         atr_vol = ind.atr(candles, p["vol_atr_length"])
         ema_bias = ind.ema(closes, p["ema_bias_length"])
         slope_bars = p["ema_bias_slope_bars"]
-        trend_ma = _ma(_source_values(candles, p["source"]), p["ma_type"], p["ma_length"]) \
+        trend_ma = ind.ma(ind.price_source(candles, p["source"]),
+                          p["ma_type"], p["ma_length"]) \
             if p["use_trend_filter"] else [None] * n
 
         # --- decision / filter config ---------------------------------------
