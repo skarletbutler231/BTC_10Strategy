@@ -91,3 +91,180 @@ def rolling_close_extremes(candles: list[dict], window: int):
         lo[i] = min(seg)
         hi[i] = max(seg)
     return lo, hi
+
+
+# ---------------------------------------------------------------------------
+# Value-series helpers. These operate on a plain list of floats (a "source")
+# rather than candle dicts, so moving averages and Bollinger Bands can be built
+# on any source (close, hl2, ohlc4, ...). Output is index-aligned with None for
+# warm-up bars, matching the candle-based helpers above.
+# ---------------------------------------------------------------------------
+
+# Source selector codes (documented in strategy `help` text so the numeric
+# dashboard input maps to a readable choice).
+SOURCE_LABELS = {0: "close", 1: "open", 2: "high", 3: "low",
+                 4: "hl2", 5: "hlc3", 6: "ohlc4"}
+
+
+def source(candles: list[dict], code: int) -> List[float]:
+    """Extract a price source series from candles. See SOURCE_LABELS."""
+    code = int(code)
+    out: List[float] = []
+    for c in candles:
+        o, h, l, cl = c["open"], c["high"], c["low"], c["close"]
+        if code == 1:
+            v = o
+        elif code == 2:
+            v = h
+        elif code == 3:
+            v = l
+        elif code == 4:
+            v = (h + l) / 2.0
+        elif code == 5:
+            v = (h + l + cl) / 3.0
+        elif code == 6:
+            v = (o + h + l + cl) / 4.0
+        else:  # 0 or unknown -> close
+            v = cl
+        out.append(v)
+    return out
+
+
+def sma(values: List[float], period: int) -> List[Num]:
+    """Simple moving average (O(n) via a running sum)."""
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    s = sum(values[:period])
+    out[period - 1] = s / period
+    for i in range(period, n):
+        s += values[i] - values[i - period]
+        out[i] = s / period
+    return out
+
+
+def ema(values: List[float], period: int) -> List[Num]:
+    """Exponential moving average, seeded with the first SMA (Pine convention)."""
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    k = 2.0 / (period + 1)
+    prev = sum(values[:period]) / period
+    out[period - 1] = prev
+    for i in range(period, n):
+        prev = values[i] * k + prev * (1.0 - k)
+        out[i] = prev
+    return out
+
+
+def rma(values: List[float], period: int) -> List[Num]:
+    """Wilder's smoothing (a.k.a. RMA/SMMA), seeded with the first SMA."""
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    prev = sum(values[:period]) / period
+    out[period - 1] = prev
+    for i in range(period, n):
+        prev = (prev * (period - 1) + values[i]) / period
+        out[i] = prev
+    return out
+
+
+def wma(values: List[Num], period: int) -> List[Num]:
+    """Weighted moving average (linear weights, most-recent heaviest).
+
+    Tolerates leading None values in `values` so it can be layered (e.g. HMA
+    takes the WMA of a series that itself has a warm-up prefix)."""
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0:
+        return out
+    denom = period * (period + 1) / 2.0
+    for i in range(period - 1, n):
+        window = values[i - period + 1: i + 1]
+        if any(v is None for v in window):
+            continue
+        s = 0.0
+        for j, v in enumerate(window):
+            s += v * (j + 1)
+        out[i] = s / denom
+    return out
+
+
+def hma(values: List[float], period: int) -> List[Num]:
+    """Hull moving average: WMA(2*WMA(n/2) - WMA(n), round(sqrt(n)))."""
+    n = len(values)
+    if period <= 1:
+        return list(values)
+    half = max(1, period // 2)
+    sqrt_n = max(1, int(round(period ** 0.5)))
+    w_half = wma(values, half)
+    w_full = wma(values, period)
+    diff: List[Num] = [
+        (2.0 * a - b) if (a is not None and b is not None) else None
+        for a, b in zip(w_half, w_full)
+    ]
+    return wma(diff, sqrt_n)
+
+
+def stdev(values: List[float], period: int) -> List[Num]:
+    """Rolling population standard deviation (Pine's `ta.stdev` default)."""
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    s = sum(values[:period])
+    s2 = sum(v * v for v in values[:period])
+
+    def sd(su: float, su2: float) -> float:
+        mean = su / period
+        var = su2 / period - mean * mean
+        return (var if var > 0.0 else 0.0) ** 0.5
+
+    out[period - 1] = sd(s, s2)
+    for i in range(period, n):
+        old = values[i - period]
+        new = values[i]
+        s += new - old
+        s2 += new * new - old * old
+        out[i] = sd(s, s2)
+    return out
+
+
+# Moving-average type codes (documented in strategy `help` text).
+MA_TYPE_LABELS = {0: "SMA", 1: "EMA", 2: "WMA", 3: "RMA", 4: "HMA"}
+
+
+def moving_average(values: List[float], period: int, ma_type: int) -> List[Num]:
+    """Dispatch to a moving average by MA_TYPE_LABELS code."""
+    t = int(ma_type)
+    if t == 1:
+        return ema(values, period)
+    if t == 2:
+        return wma(values, period)
+    if t == 3:
+        return rma(values, period)
+    if t == 4:
+        return hma(values, period)
+    return sma(values, period)  # 0 or unknown
+
+
+def bollinger(values: List[float], period: int, mult: float):
+    """Bollinger Bands on `values`: returns (basis, upper, lower) lists.
+
+    basis = SMA(period); band half-width = mult * population stdev(period)."""
+    basis = sma(values, period)
+    sd = stdev(values, period)
+    n = len(values)
+    upper: List[Num] = [None] * n
+    lower: List[Num] = [None] * n
+    for i in range(n):
+        b, d = basis[i], sd[i]
+        if b is None or d is None:
+            continue
+        upper[i] = b + mult * d
+        lower[i] = b - mult * d
+    return basis, upper, lower

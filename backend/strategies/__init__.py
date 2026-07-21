@@ -7,12 +7,14 @@ The remaining nine are listed as TODO stubs so the roadmap is visible.
 
 from ..registry import register
 from .jump_exhaustion import JumpExhaustion
+from .rsi_bb import RsiBb
 
+register(RsiBb())
 register(JumpExhaustion())
 
 # --- Roadmap: the other nine strategies from the video -----------------------
 # Implement each as a Strategy subclass, then add a register(...) line here.
-#   1. RSI + BB            (rsi_bb.py)
+#   1. RSI + BB            (rsi_bb.py)   <-- DONE
 #   2. Stoch Wick          (stoch_wick.py)
 #   3. ATR DevExh          (atr_devexh.py)
 #   4. BB Squeeze          (bb_squeeze.py)
