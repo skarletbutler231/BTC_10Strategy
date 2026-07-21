@@ -95,9 +95,10 @@ def rolling_close_extremes(candles: list[dict], window: int):
 
 # ---------------------------------------------------------------------------
 # Value-series helpers. These operate on a plain list of floats (a "source")
-# rather than candle dicts, so moving averages and Bollinger Bands can be built
-# on any source (close, hl2, ohlc4, ...). Output is index-aligned with None for
-# warm-up bars, matching the candle-based helpers above.
+# rather than candle dicts, so moving averages, dispersion and Bollinger Bands
+# can be built on any series a strategy needs (close, hl2, ohlc4, bandwidth,
+# ...). Output is index-aligned with None for warm-up bars, matching the
+# candle-based helpers above.
 # ---------------------------------------------------------------------------
 
 # Source selector codes (documented in strategy `help` text so the numeric
@@ -131,7 +132,7 @@ def source(candles: list[dict], code: int) -> List[float]:
 
 
 def sma(values: List[float], period: int) -> List[Num]:
-    """Simple moving average (O(n) via a running sum)."""
+    """Simple moving average (O(n) via a running sum). None until `period`."""
     n = len(values)
     out: List[Num] = [None] * n
     if period <= 0 or n < period:
@@ -145,12 +146,12 @@ def sma(values: List[float], period: int) -> List[Num]:
 
 
 def ema(values: List[float], period: int) -> List[Num]:
-    """Exponential moving average, seeded with the first SMA (Pine convention)."""
+    """Exponential moving average, seeded with an SMA of the first `period`."""
     n = len(values)
     out: List[Num] = [None] * n
     if period <= 0 or n < period:
         return out
-    k = 2.0 / (period + 1)
+    k = 2.0 / (period + 1.0)
     prev = sum(values[:period]) / period
     out[period - 1] = prev
     for i in range(period, n):
@@ -159,22 +160,8 @@ def ema(values: List[float], period: int) -> List[Num]:
     return out
 
 
-def rma(values: List[float], period: int) -> List[Num]:
-    """Wilder's smoothing (a.k.a. RMA/SMMA), seeded with the first SMA."""
-    n = len(values)
-    out: List[Num] = [None] * n
-    if period <= 0 or n < period:
-        return out
-    prev = sum(values[:period]) / period
-    out[period - 1] = prev
-    for i in range(period, n):
-        prev = (prev * (period - 1) + values[i]) / period
-        out[i] = prev
-    return out
-
-
 def wma(values: List[Num], period: int) -> List[Num]:
-    """Weighted moving average (linear weights, most-recent heaviest).
+    """Linearly-weighted moving average (most-recent value weighted highest).
 
     Tolerates leading None values in `values` so it can be layered (e.g. HMA
     takes the WMA of a series that itself has a warm-up prefix)."""
@@ -187,10 +174,21 @@ def wma(values: List[Num], period: int) -> List[Num]:
         window = values[i - period + 1: i + 1]
         if any(v is None for v in window):
             continue
-        s = 0.0
-        for j, v in enumerate(window):
-            s += v * (j + 1)
-        out[i] = s / denom
+        out[i] = sum(v * (j + 1) for j, v in enumerate(window)) / denom
+    return out
+
+
+def rma(values: List[float], period: int) -> List[Num]:
+    """Wilder's smoothed moving average (RMA/SMMA), as used inside ATR/RSI."""
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    prev = sum(values[:period]) / period
+    out[period - 1] = prev
+    for i in range(period, n):
+        prev = (prev * (period - 1) + values[i]) / period
+        out[i] = prev
     return out
 
 
@@ -210,27 +208,40 @@ def hma(values: List[float], period: int) -> List[Num]:
     return wma(diff, sqrt_n)
 
 
-def stdev(values: List[float], period: int) -> List[Num]:
-    """Rolling population standard deviation (Pine's `ta.stdev` default)."""
+def rolling_std(values: List[float], period: int) -> List[Num]:
+    """Population standard deviation over the last `period` values (Bollinger)."""
     n = len(values)
     out: List[Num] = [None] * n
     if period <= 0 or n < period:
         return out
-    s = sum(values[:period])
-    s2 = sum(v * v for v in values[:period])
+    for i in range(period - 1, n):
+        seg = values[i - period + 1 : i + 1]
+        m = sum(seg) / period
+        var = sum((x - m) ** 2 for x in seg) / period
+        out[i] = var ** 0.5
+    return out
 
-    def sd(su: float, su2: float) -> float:
-        mean = su / period
-        var = su2 / period - mean * mean
-        return (var if var > 0.0 else 0.0) ** 0.5
 
-    out[period - 1] = sd(s, s2)
-    for i in range(period, n):
-        old = values[i - period]
-        new = values[i]
-        s += new - old
-        s2 += new * new - old * old
-        out[i] = sd(s, s2)
+def rolling_percentile_rank(values: List[Num], window: int) -> List[Num]:
+    """Percentile rank (0-100) of values[i] within the last `window` values.
+
+    Warm-up (None) inputs are ignored; an output is produced only once a full
+    `window` of defined values ends at i. Used to detect a Bollinger "squeeze"
+    (bandwidth in a low percentile of its recent range).
+    """
+    n = len(values)
+    out: List[Num] = [None] * n
+    if window <= 0:
+        return out
+    for i in range(window - 1, n):
+        cur = values[i]
+        if cur is None:
+            continue
+        seg = values[i - window + 1 : i + 1]
+        if any(v is None for v in seg):
+            continue
+        below = sum(1 for v in seg if v <= cur)
+        out[i] = 100.0 * below / window
     return out
 
 
@@ -257,7 +268,7 @@ def bollinger(values: List[float], period: int, mult: float):
 
     basis = SMA(period); band half-width = mult * population stdev(period)."""
     basis = sma(values, period)
-    sd = stdev(values, period)
+    sd = rolling_std(values, period)
     n = len(values)
     upper: List[Num] = [None] * n
     lower: List[Num] = [None] * n

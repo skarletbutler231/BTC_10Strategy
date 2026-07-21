@@ -8,7 +8,7 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**Strategy #8 — Jump Exhaustion — is implemented** (the one you asked about).
+**Two strategies are implemented: #4 — BB Squeeze and #8 — Jump Exhaustion.**
 
 ---
 
@@ -16,9 +16,15 @@ the backend schema.
 
 ```bash
 cd /work/david/PolyMarket/03_BTC_10Strategy
-./run.sh                      # or: PORT=8100 ./run.sh
-# open http://localhost:8100
+cp .env.example .env          # first time only — set PORT for this checkout
+./run.sh
+# open http://localhost:$PORT   (default 8100)
 ```
+
+`.env` is gitignored, so the port belongs to the checkout rather than to a
+branch — switching branches no longer changes which port the dashboard binds,
+and a port tweak can never collide in a merge. Give each parallel checkout its
+own `PORT`. An inline override still wins for one-off runs: `PORT=9000 ./run.sh`.
 
 FastAPI + uvicorn are the only dependencies (already present system-wide here).
 Everything else — the Binance client, data store, indicators, and backtest
@@ -84,6 +90,24 @@ and `MARKET_DB=/path/to.db` to point at a different file.
 These exit/cost controls live in the **Exit / Backtest** parameter group and apply
 to every strategy.
 
+## Backtest modes
+
+The top-bar **Mode** selector switches how signals are scored:
+
+- **TP / SL** (default) — the TP/SL/time-stop simulation described above.
+- **Polymarket up/down** — models a Polymarket-style **5-minute binary market**.
+  Each signal is an *independent* bet placed at the next candle's open and
+  resolved purely on that candle's **direction** (close vs open); TP/SL are
+  ignored. You set the **Odds** (entry price, cost per $1 share); a WIN pays $1.
+  The stats become betting metrics: **hit rate**, **breakeven** (= your odds),
+  **EV per bet**, up/down split, and cumulative flat-stake P/L. It's profitable
+  only when hit rate > breakeven, i.e. you can enter your side below your odds.
+  Backed by `backend/polymarket.py`; works with any strategy.
+
+  BTC 5-min direction is close to a coin flip (~50%), so realistic edges are
+  small — treat a few points above 50% as thin, not a sure thing. The BB Squeeze
+  **Polymarket 5m (Reversion)** preset is tuned for this mode (interval 5m).
+
 ## Jump Exhaustion (strategy #8)
 
 *"Fade the overshoot."* An abnormal (jump) candle that pushes to a local extreme,
@@ -101,14 +125,40 @@ Parameter groups match the video's config screen:
 The `jump2_atr_mult` upper bound is deliberate: on the very biggest moves price
 tends to keep going rather than revert, so those are excluded from fading.
 
+## BB Squeeze (strategy #4)
+
+*Trade the coil.* When Bollinger Bands contract (a "squeeze"), volatility is
+compressed and a sharp move often follows. The strategy watches **%B** (where the
+close sits inside the bands) while **bandwidth** is in a low percentile of its
+recent range, and fires in the direction chosen by the **Decision** group —
+**Breakout** (go with the band push) or **Reversion** (fade the band tag). A
+stack of optional filters then refines entries.
+
+Parameter groups match the video's config screen:
+
+| Group | Params |
+|-------|--------|
+| **Bollinger Bands** | `bb_length`, `bb_mult`, `pctb_upper`, `pctb_lower` |
+| **Squeeze** | `bw_lookback`, `bw_squeeze_pct`, `require_squeeze` ☑ |
+| **EMA Bias** | `ema_bias_length`, `ema_bias_slope_bars`, `use_ema_bias` ☑ |
+| **Body Filter** | `min_body_ratio` |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `vol_min_atr_pct`, `vol_max_atr_pct` |
+| **Decision** | `predict_direction` (Breakout ⋁ Reversion) |
+| **Allowed Trading Window** | `use_trading_window` ☑, `trade_mon…trade_sun` ☑, `start/end_hour`, `start/end_minute` (UTC, wrap-aware) |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic` (With/Against), `ma_type` (SMA/EMA/WMA/RMA), `ma_length`, `source` (close/hl2/…) |
+
+Presets: **Squeeze Breakout**, **Mean Reversion**, **Trend-Filtered Breakout**.
+
 ## Adding another strategy
 
 1. Create `backend/strategies/<name>.py` with a `Strategy` subclass implementing
    `param_groups()` and `generate_signals(candles, params)`.
 2. `register()` it in `backend/strategies/__init__.py`.
 
-That's it — it appears in the dropdown and its params render automatically. The
-nine remaining video strategies are listed as TODOs in that `__init__.py`.
+That's it — it appears in the dropdown and its params render automatically. Params
+support four `kind`s — `int`, `float`, `bool` (checkbox), and `enum` (dropdown,
+via `options=[…]`) — so a strategy can expose toggles and choices, not just
+numbers. The remaining video strategies are listed as TODOs in that `__init__.py`.
 
 ## Layout
 
@@ -120,7 +170,7 @@ backend/
   binance.py         Binance klines (stdlib urllib, paginated, host fallback)
   data/
     ingest.py        bulk-loader: data.binance.vision zips -> SQLite (idempotent)
-  indicators.py      ATR / RSI / rolling close extremes (pure Python)
+  indicators.py      ATR / RSI / extremes / MAs / std / percentile (pure Python)
   engine.py          backtest engine + shared Exit/Backtest params
   registry.py        strategy registry
   strategies/

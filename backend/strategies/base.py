@@ -8,7 +8,7 @@ Signals. The dashboard renders each strategy's parameter form automatically from
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 Side = Literal["long", "short"]
 
@@ -17,14 +17,24 @@ Side = Literal["long", "short"]
 class Param:
     key: str
     label: str
-    default: float
-    kind: Literal["int", "float"] = "float"
+    default: Any                                      # number, bool, or enum string
+    kind: Literal["int", "float", "bool", "enum"] = "float"
     min: Optional[float] = None
     max: Optional[float] = None
     step: Optional[float] = None
     help: str = ""
+    options: Optional[List[str]] = None               # allowed values for kind="enum"
 
     def coerce(self, v):
+        if self.kind == "bool":
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                return v.strip().lower() in ("1", "true", "yes", "on")
+            return bool(v)
+        if self.kind == "enum":
+            s = str(v)
+            return s if (not self.options or s in self.options) else self.default
         v = float(v)
         return int(round(v)) if self.kind == "int" else v
 
