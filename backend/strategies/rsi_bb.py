@@ -250,6 +250,22 @@ class RsiBb(Strategy):
                 "use_trend_filter": False,
                 "atr_pct_min": 0.08, "atr_pct_max": 5.0,
             },
+            # 15m markets (Mode = "Polymarket up/down", interval 15m). Real edge
+            # but CHOPPIER than 5m: ~57.3% hit over 13 months yet only 8/13 were
+            # winning months (worst ~35%), so size stakes conservatively. ~38
+            # bets/mo, less-extreme RSI (40/60) since 15m candles reach extremes
+            # less often. EV-positive up to ~0.57. (1m was analysed and rejected:
+            # weaker ~54% edge, a 47.9% base up-rate that flags a microstructure
+            # artifact rather than real edge, and no 1m market on Polymarket.)
+            "Polymarket 15m (Reversion)": {
+                "direction": "Both",
+                "rsi_oversold": 40, "rsi_overbought": 60,
+                "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.30,
+                "use_bias_filter": False,
+                "use_trend_filter": False,
+                "atr_pct_min": 0.08, "atr_pct_max": 5.0,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:
