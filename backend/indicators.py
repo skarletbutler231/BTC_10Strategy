@@ -263,6 +263,23 @@ def moving_average(values: List[float], period: int, ma_type: int) -> List[Num]:
     return sma(values, period)  # 0 or unknown
 
 
+def donchian(candles: list[dict], length: int):
+    """Donchian channel -> (upper, lower): the highest high and lowest low over
+    the last `length` bars *including* the current one, so `high[i] >= upper[i]`
+    means bar i just made a new `length`-bar high."""
+    n = len(candles)
+    up: List[Num] = [None] * n
+    lo: List[Num] = [None] * n
+    if length <= 0 or n < length:
+        return up, lo
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    for i in range(length - 1, n):
+        up[i] = max(highs[i - length + 1: i + 1])
+        lo[i] = min(lows[i - length + 1: i + 1])
+    return up, lo
+
+
 def stochastic(candles: list[dict], k_length: int, d_length: int):
     """Stochastic oscillator -> (%K, %D), each 0-100 and index-aligned.
 
