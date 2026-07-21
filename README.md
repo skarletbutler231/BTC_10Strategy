@@ -16,9 +16,15 @@ the backend schema.
 
 ```bash
 cd /work/david/PolyMarket/03_BTC_10Strategy
-./run.sh                      # or: PORT=8100 ./run.sh
-# open http://localhost:8100
+cp .env.example .env          # first time only — set PORT for this checkout
+./run.sh
+# open http://localhost:$PORT   (default 8100)
 ```
+
+`.env` is gitignored, so the port belongs to the checkout rather than to a
+branch — switching branches no longer changes which port the dashboard binds,
+and a port tweak can never collide in a merge. Give each parallel checkout its
+own `PORT`. An inline override still wins for one-off runs: `PORT=9000 ./run.sh`.
 
 FastAPI + uvicorn are the only dependencies (already present system-wide here).
 Everything else — the Binance client, data store, indicators, and backtest

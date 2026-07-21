@@ -1,7 +1,7 @@
 """FastAPI app: strategy catalog, candle loader, and backtest runner.
 
-Run:  ./run.sh   (or  python3 -m uvicorn backend.main:app --port 8100)
-Open: http://localhost:8100
+Run:  ./run.sh   — port/host come from .env (see .env.example); default 8100.
+Open: http://localhost:$PORT
 """
 
 from __future__ import annotations
