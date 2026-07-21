@@ -8,7 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**Two strategies are implemented: #4 — BB Squeeze and #8 — Jump Exhaustion.**
+**Three strategies are implemented: #4 — BB Squeeze, #8 — Jump Exhaustion, and
+#9 — CCI Williams.**
 
 ---
 
@@ -108,6 +109,48 @@ The top-bar **Mode** selector switches how signals are scored:
   small — treat a few points above 50% as thin, not a sure thing. The BB Squeeze
   **Polymarket 5m (Reversion)** preset is tuned for this mode (interval 5m).
 
+## CCI Williams (strategy #9)
+
+*Two oscillators must agree.* **CCI** says how far the typical price has stretched
+from its own mean (in units of that window's average deviation); **Williams %R**
+says where the close sits inside the window's high-low *range*. Either alone
+fires constantly in a trend — together they pin down the exhaustion state:
+stretched from the mean **and** stuck at the range extreme. An optional candle
+filter then demands visible rejection, and a volatility band skips dead tape.
+
+| Group | Params |
+|-------|--------|
+| **Core** | `cci_length`, `cci_threshold`, `wr_length`, `wr_overbought`, `wr_oversold` |
+| **Candle** | `use_wick_confirm` ☑, `wick_min` (rejection wick / range), `close_recover_min` (how far the close backed off the extreme) |
+| **Volatility** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
+
+`%R` runs **-100…0**, so "overbought" is the *less negative* end (e.g. `-20`) and
+oversold the more negative (`-80`). Up-exhaustion = CCI ≥ +threshold **and**
+%R ≥ overbought; the down mirror uses CCI ≤ −threshold and %R ≤ oversold.
+**Reversion** fades that, **Continuation** rides it.
+
+### Polymarket presets
+
+Five presets tuned for **Polymarket up/down** mode (interval 5m) sit on a
+volume-vs-hit-rate frontier, fitted over the **entire** local DB — 936,841 5m
+bars, 2017-08 → 2026-07:
+
+| Preset | Bets | Hit | 2024-26 bets | 2024-26 hit |
+|--------|-----:|----:|-------------:|------------:|
+| **PM 5m Volume** | 98,089 | 56.68% | 32,230 | 54.01% |
+| **PM 5m Balanced** | 59,099 | 57.15% | 18,008 | 55.26% |
+| **PM 5m Selective** | 24,553 | 58.60% | 8,273 | 56.82% |
+| **PM 5m Hi Hit** | 13,518 | 59.48% | 2,709 | 58.10% |
+| **PM 5m Max Hit** | 1,458 | 60.36% | 285 | 63.51% |
+
+Each had to win in *every* calendar year, clear 53% in 2024-26 on its own, and
+be statistically significant — not just look good in aggregate. Two honest
+caveats: **the edge decays** (every preset is several points weaker in 2024-26
+than in 2018-23, so read that column, not the headline), and **2017 is the weak
+year** at ~50% for all but *Max Hit*. Since a bet only pays when hit rate beats
+your odds, *Selective*'s 56.8% recent hit needs entry below ~0.568 to be +EV.
+
 ## Jump Exhaustion (strategy #8)
 
 *"Fade the overshoot."* An abnormal (jump) candle that pushes to a local extreme,
@@ -176,6 +219,8 @@ backend/
   strategies/
     base.py          Strategy base class, Param / ParamGroup / Signal
     jump_exhaustion.py
+    bb_squeeze.py
+    cci_williams.py
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)

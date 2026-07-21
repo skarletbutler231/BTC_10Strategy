@@ -7,10 +7,12 @@ are implemented. The rest are listed as TODO stubs so the roadmap is visible.
 
 from ..registry import register
 from .bb_squeeze import BBSqueeze
+from .cci_williams import CCIWilliams
 from .jump_exhaustion import JumpExhaustion
 
 register(BBSqueeze())
 register(JumpExhaustion())
+register(CCIWilliams())
 
 # --- Roadmap: the other strategies from the video ----------------------------
 # Implement each as a Strategy subclass, then add a register(...) line here.
@@ -22,5 +24,5 @@ register(JumpExhaustion())
 #   6. Regime Switch       (regime_switch.py)
 #   7. Volume Exhaustion   (volume_exhaustion.py)
 #   8. Jump Exhaustion     (jump_exhaustion.py) <-- DONE
-#   9. CCI Williams        (cci_williams.py)
+#   9. CCI Williams        (cci_williams.py)   <-- DONE
 #  10. Multi Horizon       (multi_horizon.py)

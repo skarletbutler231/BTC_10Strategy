@@ -75,6 +75,51 @@ def rsi(candles: list[dict], period: int) -> List[Num]:
     return out
 
 
+def williams_r(candles: list[dict], period: int) -> List[Num]:
+    """Williams %R over the last `period` bars, on a -100..0 scale.
+
+    0 means the close sits exactly at the window's highest high (overbought);
+    -100 means it sits at the lowest low (oversold). None during warm-up, and
+    also on a perfectly flat window where the measure is undefined.
+    """
+    n = len(candles)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    for i in range(period - 1, n):
+        seg = candles[i - period + 1 : i + 1]
+        hh = max(c["high"] for c in seg)
+        ll = min(c["low"] for c in seg)
+        rng = hh - ll
+        if rng > 0:
+            out[i] = (hh - candles[i]["close"]) / rng * -100.0
+    return out
+
+
+def cci(candles: list[dict], period: int) -> List[Num]:
+    """Commodity Channel Index on the typical price (H+L+C)/3.
+
+    CCI = (TP - SMA(TP)) / (0.015 * mean absolute deviation). The 0.015 scaling
+    is Lambert's original constant, which puts roughly 70-80% of readings inside
+    +/-100 — so |CCI| >= 100 is the conventional "stretched" band. A flat window
+    (zero mean deviation) yields 0.0 rather than a divide-by-zero.
+    """
+    n = len(candles)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < period:
+        return out
+    tp = [(c["high"] + c["low"] + c["close"]) / 3.0 for c in candles]
+    basis = sma(tp, period)
+    for i in range(period - 1, n):
+        m = basis[i]
+        if m is None:
+            continue
+        seg = tp[i - period + 1 : i + 1]
+        mad = sum(abs(x - m) for x in seg) / period
+        out[i] = 0.0 if mad == 0 else (tp[i] - m) / (0.015 * mad)
+    return out
+
+
 def rolling_close_extremes(candles: list[dict], window: int):
     """Rolling (min_close, max_close) over the last `window` closes ending at i.
 
