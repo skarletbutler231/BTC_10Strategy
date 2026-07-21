@@ -10,15 +10,17 @@ from ..registry import register
 from .bb_squeeze import BBSqueeze
 from .jump_exhaustion import JumpExhaustion
 from .rsi_bb import RsiBb
+from .stoch_wick import StochWick
 
 register(RsiBb())
+register(StochWick())
 register(BBSqueeze())
 register(JumpExhaustion())
 
 # --- Roadmap: the other strategies from the video ----------------------------
 # Implement each as a Strategy subclass, then add a register(...) line here.
 #   1. RSI + BB            (rsi_bb.py)          <-- DONE
-#   2. Stoch Wick          (stoch_wick.py)
+#   2. Stoch Wick          (stoch_wick.py)     <-- DONE
 #   3. ATR DevExh          (atr_devexh.py)
 #   4. BB Squeeze          (bb_squeeze.py)      <-- DONE
 #   5. ZScore MS           (zscore_ms.py)

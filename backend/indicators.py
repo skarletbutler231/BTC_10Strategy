@@ -263,6 +263,78 @@ def moving_average(values: List[float], period: int, ma_type: int) -> List[Num]:
     return sma(values, period)  # 0 or unknown
 
 
+def stochastic(candles: list[dict], k_length: int, d_length: int):
+    """Stochastic oscillator -> (%K, %D), each 0-100 and index-aligned.
+
+    %K = 100 * (close - lowest low) / (highest high - lowest low) over
+    `k_length` bars; %D = simple average of %K over `d_length` bars. A flat
+    window (high == low) yields a neutral 50."""
+    n = len(candles)
+    k: List[Num] = [None] * n
+    d: List[Num] = [None] * n
+    if k_length <= 0 or d_length <= 0 or n < k_length:
+        return k, d
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    for i in range(k_length - 1, n):
+        hh = max(highs[i - k_length + 1: i + 1])
+        ll = min(lows[i - k_length + 1: i + 1])
+        span = hh - ll
+        k[i] = 50.0 if span <= 0 else 100.0 * (candles[i]["close"] - ll) / span
+    for i in range(k_length - 1 + d_length - 1, n):
+        window = k[i - d_length + 1: i + 1]
+        if any(v is None for v in window):
+            continue
+        d[i] = sum(window) / d_length
+    return k, d
+
+
+def adx(candles: list[dict], period: int) -> List[Num]:
+    """Wilder's ADX (0-100): trend *strength*, direction-agnostic.
+
+    Low ADX = ranging/choppy tape (where mean reversion works); high ADX =
+    a strong directional trend. Built from Wilder-smoothed +DM/-DM/TR."""
+    n = len(candles)
+    out: List[Num] = [None] * n
+    if period <= 0 or n < 2 * period:
+        return out
+
+    tr = [0.0] * n
+    pdm = [0.0] * n
+    ndm = [0.0] * n
+    for i in range(1, n):
+        h, l = candles[i]["high"], candles[i]["low"]
+        ph, pl, pc = candles[i - 1]["high"], candles[i - 1]["low"], candles[i - 1]["close"]
+        tr[i] = max(h - l, abs(h - pc), abs(l - pc))
+        up, dn = h - ph, pl - l
+        pdm[i] = up if (up > dn and up > 0) else 0.0
+        ndm[i] = dn if (dn > up and dn > 0) else 0.0
+
+    # Wilder smoothing of the three series (the RMA seed cancels in the DI ratio)
+    s_tr = rma(tr[1:], period)
+    s_pdm = rma(pdm[1:], period)
+    s_ndm = rma(ndm[1:], period)
+
+    dx: List[Num] = [None] * n
+    for j in range(len(s_tr)):
+        t, p, m = s_tr[j], s_pdm[j], s_ndm[j]
+        if t is None or p is None or m is None or t <= 0:
+            continue
+        pdi = 100.0 * p / t
+        ndi = 100.0 * m / t
+        tot = pdi + ndi
+        dx[j + 1] = 0.0 if tot <= 0 else 100.0 * abs(pdi - ndi) / tot
+
+    first = next((i for i, v in enumerate(dx) if v is not None), None)
+    if first is None:
+        return out
+    smoothed = rma([v for v in dx[first:]], period)  # dx is contiguous past `first`
+    for j, v in enumerate(smoothed):
+        if v is not None:
+            out[first + j] = v
+    return out
+
+
 def bollinger(values: List[float], period: int, mult: float):
     """Bollinger Bands on `values`: returns (basis, upper, lower) lists.
 
