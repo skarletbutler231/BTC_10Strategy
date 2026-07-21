@@ -57,12 +57,22 @@ function buildForm(schema) {
     for (const p of g.params) {
       const row = document.createElement('div');
       row.className = 'prow';
-      const step = p.step || (p.kind === 'int' ? 1 : 0.01);
-      row.innerHTML = `
-        <label for="param-${p.key}" title="${(p.help || '').replace(/"/g, '&quot;')}">${p.label}</label>
-        <input id="param-${p.key}" type="number" step="${step}"
+      const title = (p.help || '').replace(/"/g, '&quot;');
+      const label = `<label for="param-${p.key}" title="${title}">${p.label}</label>`;
+      let ctrl;
+      if (p.kind === 'bool') {
+        ctrl = `<input id="param-${p.key}" type="checkbox" data-key="${p.key}" data-kind="bool" ${p.default ? 'checked' : ''} />`;
+      } else if (p.kind === 'enum') {
+        const opts = (p.options || []).map(
+          (o) => `<option value="${o}" ${o === p.default ? 'selected' : ''}>${o}</option>`).join('');
+        ctrl = `<select id="param-${p.key}" data-key="${p.key}" data-kind="enum">${opts}</select>`;
+      } else {
+        const step = p.step || (p.kind === 'int' ? 1 : 0.01);
+        ctrl = `<input id="param-${p.key}" type="number" step="${step}"
                ${p.min != null ? `min="${p.min}"` : ''} ${p.max != null ? `max="${p.max}"` : ''}
-               value="${p.default}" data-key="${p.key}" />`;
+               value="${p.default}" data-key="${p.key}" data-kind="${p.kind}" />`;
+      }
+      row.innerHTML = label + ctrl;
       div.appendChild(row);
     }
     box.appendChild(div);
@@ -75,20 +85,26 @@ function buildForm(schema) {
     o.value = name; o.textContent = name;
     psel.appendChild(o);
   }
+  applyModeUI();  // Exit/Backtest group visibility depends on the current mode
 }
 
 function applyPreset(schema, name) {
   const preset = (schema.presets || {})[name] || {};
-  for (const inp of document.querySelectorAll('#params input')) {
-    const k = inp.dataset.key;
-    if (k in preset) inp.value = preset[k];
+  for (const el of document.querySelectorAll('#params [data-key]')) {
+    const k = el.dataset.key;
+    if (!(k in preset)) continue;
+    if (el.dataset.kind === 'bool') el.checked = !!preset[k];
+    else el.value = preset[k];
   }
 }
 
 function readParams() {
   const out = {};
-  for (const inp of document.querySelectorAll('#params input')) {
-    out[inp.dataset.key] = parseFloat(inp.value);
+  for (const el of document.querySelectorAll('#params [data-key]')) {
+    const k = el.dataset.key;
+    if (el.dataset.kind === 'bool') out[k] = el.checked;
+    else if (el.dataset.kind === 'enum') out[k] = el.value;
+    else out[k] = parseFloat(el.value);
   }
   return out;
 }
@@ -121,12 +137,29 @@ function renderStats(s, meta) {
   ].join('');
 }
 
-function renderTrades(trades) {
-  $('tradeCount').textContent = `${trades.length} trade(s)`;
+function renderStatsBinary(s) {
+  const evc = s.ev_per_bet_pct > 0 ? 'pos' : s.ev_per_bet_pct < 0 ? 'neg' : '';
+  const sign = (x) => (x > 0 ? 'pos' : x < 0 ? 'neg' : '');
+  $('stats').innerHTML = [
+    statCard('Bets', s.bets),
+    statCard('Hit rate', `${s.hit_rate}%`, s.hit_rate >= s.breakeven ? 'pos' : 'neg'),
+    statCard('Breakeven', `${s.breakeven}%`),
+    statCard('EV / bet', `${s.ev_per_bet_pct >= 0 ? '+' : ''}${s.ev_per_bet_pct}%`, evc),
+    statCard('Total P/L', `${s.total_return_pct >= 0 ? '+' : ''}${s.total_return_pct}%`, sign(s.total_return_pct)),
+    statCard('Profit factor', s.profit_factor == null ? '∞' : s.profit_factor),
+    statCard('Wins/Losses', `${s.wins}/${s.losses}${s.flats ? ` (+${s.flats} flat)` : ''}`),
+    statCard('Up/Down bets', `${s.up_bets}/${s.down_bets}`),
+    statCard('Max DD', `${s.max_drawdown_pct}%`, s.max_drawdown_pct < 0 ? 'neg' : ''),
+    statCard('Odds', s.entry_price),
+  ].join('');
+}
+
+function renderTrades(trades, binary) {
+  $('tradeCount').textContent = `${trades.length} ${binary ? 'bet' : 'trade'}(s)`;
   const rows = trades.map((t, i) => `
     <tr>
       <td>${i + 1}</td>
-      <td class="${t.side}">${t.side === 'long' ? 'LONG' : 'SHORT'}</td>
+      <td class="${t.side}">${binary ? (t.side === 'long' ? 'UP' : 'DOWN') : (t.side === 'long' ? 'LONG' : 'SHORT')}</td>
       <td>${fmtTime(t.entry_time)}</td>
       <td>${fmtPx(t.entry)}</td>
       <td>${fmtPx(t.exit)}</td>
@@ -176,12 +209,14 @@ async function loadChart() {
 
 async function runBacktest() {
   const p = q();
-  setBusy('Fetching candles & simulating…');
+  const mode = $('mode').value;
+  const entry_price = parseFloat($('odds').value) || 0.5;
+  setBusy(mode === 'polymarket' ? 'Simulating Polymarket up/down bets…' : 'Fetching candles & simulating…');
   try {
     const body = {
       strategy_id: $('strategy').value,
       symbol: p.symbol, interval: p.interval, start: p.start, end: p.end,
-      params: readParams(),
+      params: readParams(), mode, entry_price,
     };
     const data = await api('/api/backtest', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -189,12 +224,30 @@ async function runBacktest() {
     });
     drawCandles(data.candles);
     candleSeries.setMarkers(data.markers);
-    renderStats(data.stats, { bars: data.bars });
-    renderTrades(data.trades);
     const s = data.stats;
-    setOk(`${data.strategy.name}: ${s.trades} trades from ${s.signals} signals · ` +
-          `${s.win_rate}% win · ${s.total_return_pct >= 0 ? '+' : ''}${s.total_return_pct}% total.`);
+    if (data.mode === 'polymarket') {
+      renderStatsBinary(s);
+      renderTrades(data.trades, true);
+      setOk(`${data.strategy.name} · Polymarket up/down: ${s.bets} bets · ` +
+            `${s.hit_rate}% hit (breakeven ${s.breakeven}%) · ` +
+            `EV ${s.ev_per_bet_pct >= 0 ? '+' : ''}${s.ev_per_bet_pct}%/bet at ${s.entry_price} odds.`);
+    } else {
+      renderStats(s, { bars: data.bars });
+      renderTrades(data.trades);
+      setOk(`${data.strategy.name}: ${s.trades} trades from ${s.signals} signals · ` +
+            `${s.win_rate}% win · ${s.total_return_pct >= 0 ? '+' : ''}${s.total_return_pct}% total.`);
+    }
   } catch (e) { setError(e.message); }
+}
+
+/* Show the odds input + hide the (irrelevant) Exit/Backtest group in PM mode. */
+function applyModeUI() {
+  const pm = $('mode').value === 'polymarket';
+  $('oddsWrap').style.display = pm ? '' : 'none';
+  for (const g of document.querySelectorAll('#params .pgroup')) {
+    const h = g.querySelector('h4');
+    if (h && /exit \/ backtest/i.test(h.textContent)) g.style.display = pm ? 'none' : '';
+  }
 }
 
 /* ---------- init ---------- */
@@ -222,6 +275,7 @@ async function init() {
 
   sel.onchange = () => buildForm(CATALOG[sel.value]);
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
+  $('mode').onchange = applyModeUI;
   $('runBtn').onclick = runBacktest;
   $('loadBtn').onclick = loadChart;
 

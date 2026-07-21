@@ -21,6 +21,15 @@
           <option>4h</option><option>1d</option>
         </select>
       </label>
+      <label>Mode
+        <select id="mode">
+          <option value="tpsl">TP / SL</option>
+          <option value="polymarket">Polymarket up/down</option>
+        </select>
+      </label>
+      <label id="oddsWrap" style="display:none">Odds
+        <input id="odds" type="number" value="0.50" step="0.01" min="0.01" max="0.99" size="5" />
+      </label>
       <label>Start <input id="start" type="date" /></label>
       <label>End <input id="end" type="date" /></label>
       <button id="loadBtn" class="ghost">Load chart</button>

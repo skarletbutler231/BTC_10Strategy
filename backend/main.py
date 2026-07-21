@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import binance
+from . import polymarket
 from . import registry
 from . import store
 from . import strategies  # noqa: F401 - registers strategies on import
@@ -39,6 +40,8 @@ class BacktestRequest(BaseModel):
     start: str                     # 'YYYY-MM-DD' or unix seconds/ms
     end: Optional[str] = None      # default: now
     params: dict = {}
+    mode: str = "tpsl"             # 'tpsl' (TP/SL sim) or 'polymarket' (binary up/down)
+    entry_price: float = 0.5       # polymarket mode: cost per $1 share (the odds)
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -158,19 +161,26 @@ def backtest(req: BacktestRequest):
     candles = _load_candles(req.symbol, req.interval, req.start, req.end)
     params = strat.resolve_params(req.params)
     signals = strat.generate_signals(candles, params)
-    result = run_backtest(candles, signals, params)
+
+    if req.mode == "polymarket":
+        result = polymarket.run_binary_backtest(candles, signals, req.entry_price)
+        markers = polymarket.binary_markers(result["trades"])
+    else:
+        result = run_backtest(candles, signals, params)
+        markers = _markers(candles, result["trades"])
 
     return {
         "strategy": {"id": strat.id, "name": strat.name},
         "symbol": req.symbol.upper(),
         "interval": req.interval,
+        "mode": req.mode,
         "params": params,
         "bars": len(candles),
         "range": {"from": candles[0]["time"], "to": candles[-1]["time"]},
         "candles": candles,
         "signals": [s.to_dict() for s in signals],
         "trades": result["trades"],
-        "markers": _markers(candles, result["trades"]),
+        "markers": markers,
         "equity": result["equity"],
         "stats": result["stats"],
     }
