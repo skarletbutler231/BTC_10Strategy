@@ -8,8 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**Four strategies are implemented: #4 — BB Squeeze, #7 — Volume Exhaustion,
-#8 — Jump Exhaustion, and #9 — CCI Williams.**
+**Five strategies are implemented: #4 — BB Squeeze, #7 — Volume Exhaustion,
+#8 — Jump Exhaustion, #9 — CCI Williams, and #10 — Multi Horizon.**
 
 ---
 
@@ -108,6 +108,63 @@ The top-bar **Mode** selector switches how signals are scored:
   BTC 5-min direction is close to a coin flip (~50%), so realistic edges are
   small — treat a few points above 50% as thin, not a sure thing. The BB Squeeze
   **Polymarket 5m (Reversion)** preset is tuned for this mode (interval 5m).
+
+## Multi Horizon (strategy #10)
+
+*Agreement across timeframes.* One lookback only ever tells one story — a close
+can look wildly stretched against the last hour and perfectly ordinary against
+the last twelve, and a single-window signal cannot tell those apart. This
+strategy measures the same **z-score** at three horizons at once:
+
+```
+z(h) = (close − SMA(close, h)) / stdev(close, h)
+```
+
+Expressed in each horizon's own sigmas, `z` is comparable across horizons *and*
+across the 2017-2026 price range — 2σ means the same thing at $4k and $120k.
+Defaults of 12/48/144 bars are 1h/4h/12h on the 5m interval.
+
+| Group | Params |
+|-------|--------|
+| **Horizons** | `h_fast`, `h_mid`, `h_slow` (bars) |
+| **Signal** | `z_threshold`, `min_agree` (how many horizons must be stretched the same way), `require_fast` |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
+| **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
+
+Any horizon stretched the *opposite* way vetoes the bar — that is a conflict, not
+a signal.
+
+### Polymarket presets
+
+Swept over the whole DB (936,841 5m bars, ~94k combinations), same admission
+rules as the others:
+
+| Preset | Bets | Hit | 2024-26 bets | 2024-26 hit | Worst yr | z |
+|--------|-----:|----:|-------------:|------------:|---------:|--:|
+| **PM 5m Volume** | 55,277 | 55.12% | 16,865 | 53.12% | 50.30% | 24.1 |
+| **PM 5m Balanced** | 40,342 | 57.48% | 10,805 | **56.25%** | 50.36% | **30.0** |
+| **PM 5m Selective** | 21,706 | 57.45% | 3,105 | 57.65% | 50.66% | 22.0 |
+| **PM 5m Hi Hit** | 8,315 | 58.99% | 2,027 | 58.26% | 53.95% | 16.4 |
+| **PM 5m Max Hit** | 3,798 | 60.80% | 582 | 61.00% | **55.24%** | 13.3 |
+
+**This is the strongest strategy in the repo.** *Balanced* holds 56.25% across
+10,805 recent bets at z=30.0, and — unlike the other strategies' high-hit
+presets — *Hi Hit* and *Max Hit* rest on real samples: every year from 2017 to
+2026 lands between 53.9% and 63.2%, so neither leans on one lucky regime.
+
+Three findings came out of the sweep:
+
+- **Reversion only, again.** All 4,304 passing combinations were Reversion, zero
+  Continuation. That now holds across three independent strategies — on BTC 5m,
+  stretch reverts.
+- **The veto matters more than the agreement.** The best configs use
+  `min_agree = 1`, so they do *not* demand horizons line up. The edge comes from
+  the other half of the rule: no horizon may disagree. Multi-horizon pays off as
+  a **conflict filter**, not a confirmation stack.
+- **"With Trend" here**, which combined with Reversion means buying a
+  down-stretch while price is above the MA — buy the dip in an uptrend. (Volume
+  Exhaustion preferred *Against* Trend; different setups, no contradiction.)
 
 ## Volume Exhaustion (strategy #7)
 
@@ -265,6 +322,7 @@ backend/
     bb_squeeze.py
     cci_williams.py
     volume_exhaustion.py
+    multi_horizon.py
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)

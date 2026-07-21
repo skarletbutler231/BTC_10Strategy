@@ -9,12 +9,14 @@ from ..registry import register
 from .bb_squeeze import BBSqueeze
 from .cci_williams import CCIWilliams
 from .jump_exhaustion import JumpExhaustion
+from .multi_horizon import MultiHorizon
 from .volume_exhaustion import VolumeExhaustion
 
 register(BBSqueeze())
 register(JumpExhaustion())
 register(CCIWilliams())
 register(VolumeExhaustion())
+register(MultiHorizon())
 
 # --- Roadmap: the other strategies from the video ----------------------------
 # Implement each as a Strategy subclass, then add a register(...) line here.
@@ -27,4 +29,4 @@ register(VolumeExhaustion())
 #   7. Volume Exhaustion   (volume_exhaustion.py) <-- DONE
 #   8. Jump Exhaustion     (jump_exhaustion.py) <-- DONE
 #   9. CCI Williams        (cci_williams.py)   <-- DONE
-#  10. Multi Horizon       (multi_horizon.py)
+#  10. Multi Horizon       (multi_horizon.py)  <-- DONE
