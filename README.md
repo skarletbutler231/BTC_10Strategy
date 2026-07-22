@@ -328,9 +328,67 @@ Parameter groups match the video's config screen:
 | **Candle** | `close_extreme_min` (close near the local high/low), `wick_min_ratio` (rejection wick as a fraction of range) |
 | **RSI** | `rsi_length`, `rsi_overbought`, `rsi_oversold` |
 | **Volatility** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` (trade only inside a volatility band) |
+| **Day of Week (UTC)** | `trade_mon` … `trade_sun` ☑ — which UTC weekdays may fire |
 
 The `jump2_atr_mult` upper bound is deliberate: on the very biggest moves price
 tends to keep going rather than revert, so those are excluded from fading.
+
+### Saturday
+
+This is the one strategy here that cares *when* the jump happens, and the day
+that stands out is **Saturday**. "Best of 7 days" always produces a winner, so
+the claim was tested four ways before any parameter was tuned on it:
+
+1. **Control.** Raw 5m bar direction has no day bias — P(close>open) is 49.82 /
+   49.91 / 50.21 / 49.79 / 49.94 / 49.87 / 49.79 % Mon…Sun across all 936,829
+   bars. The effect is in the setups, not the tape.
+2. **Persistence.** On the video's *Aggressive* preset (32,714 bets) Saturday
+   beats the other six days in **nine of ten** calendar years; only 2026, a
+   partial year, is negative (−0.19pp). Overall +2.65pp, two-proportion z=+3.19.
+3. **Permutation.** Shuffling day labels 2,000×, the best day looks this good by
+   chance in 0.1% of draws (p=0.001). Chi-square 18.4 on 6 df.
+4. **Out-of-sample.** Saturday picked on 2017-2023 alone, scored on 2024-2026:
+   56.67% vs a 54.51% all-days baseline.
+
+Tuesday and Friday also look good in-sample and **fail** step 4 — tier winners
+including them dropped from ~61% on 2017-2023 to ~55% on 2024-26 while the
+Saturday-only picks held. That is why the presets are Saturday-only rather than
+"the best three days". With *Sat Hi Hit*'s parameters, by day over all history:
+
+| Mon | Tue | Wed | Thu | Fri | Sat | Sun |
+|----:|----:|----:|----:|----:|----:|----:|
+| 55.1% | 57.2% | 57.7% | 56.5% | 56.6% | **60.4%** | 57.8% |
+
+### Polymarket presets
+
+10,368 parameter combinations × 127 day-subsets. Parameters **and** days were
+chosen on 2017-2023 only and 2024-2026 scored afterwards, so the TEST column is
+genuinely out-of-sample. Admission: win every calendar year, z ≥ 2.5 on train.
+
+| Preset | Bets | Hit | Train 17-23 | TEST 24-26 | Worst yr | z |
+|--------|-----:|----:|------------:|-----------:|---------:|--:|
+| **PM 5m Sat Hi Hit** | 3,356 | 60.31% | 60.67% | **59.46%** | **53.24%** | 11.9 |
+| **PM 5m Sat Volume** | 6,325 | 59.19% | 60.14% | 56.97% | 50.78% | 14.6 |
+| **PM 5m All Days** | 29,185 | 57.20% | 58.14% | 55.03% | 52.96% | 24.6 |
+
+***Sat Hi Hit* has the best recent hit rate in the repo** — 59.46% across 1,004
+out-of-sample bets, every year from 2017 to 2026 between 53.2% and 64.9%. It pays
+for that in volume: Saturday is one day in seven, so the ceiling is ~470 bets a
+year. *All Days* is the same parameters with the gate open — it shows what the
+day filter is worth (+3.1pp) and serves when you want bet count over edge.
+
+Two things the sweep **rejected**, both from the video's setup:
+
+- **The rejection wick earns nothing.** Every winning combination sets
+  `wick_min_ratio = 0`.
+- **So does the ATR% regime filter** — the best combinations run it wide open.
+  The work is done by the jump-size floor plus stretched RSI.
+
+Caveats: days are **UTC** and a bar is stamped by its open time, so another
+timezone will not reproduce this. The edge decays here too (~60-65% in 2018-2023
+vs ~59% in 2024-26). And *why* Saturday rather than Sunday is not explained by
+anything measured — thin weekend books are the obvious guess, but Sunday is only
+middling at 57.8%, so treat the mechanism as unknown and the effect as empirical.
 
 ## BB Squeeze (strategy #4)
 
