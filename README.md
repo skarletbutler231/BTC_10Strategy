@@ -8,7 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**Two strategies are implemented: #4 — BB Squeeze and #8 — Jump Exhaustion.**
+**Five strategies are implemented: #4 — BB Squeeze, #7 — Volume Exhaustion,
+#8 — Jump Exhaustion, #9 — CCI Williams, and #10 — Multi Horizon.**
 
 ---
 
@@ -108,6 +109,148 @@ The top-bar **Mode** selector switches how signals are scored:
   small — treat a few points above 50% as thin, not a sure thing. The BB Squeeze
   **Polymarket 5m (Reversion)** preset is tuned for this mode (interval 5m).
 
+## Multi Horizon (strategy #10)
+
+*Agreement across timeframes.* One lookback only ever tells one story — a close
+can look wildly stretched against the last hour and perfectly ordinary against
+the last twelve, and a single-window signal cannot tell those apart. This
+strategy measures the same **z-score** at three horizons at once:
+
+```
+z(h) = (close − SMA(close, h)) / stdev(close, h)
+```
+
+Expressed in each horizon's own sigmas, `z` is comparable across horizons *and*
+across the 2017-2026 price range — 2σ means the same thing at $4k and $120k.
+Defaults of 12/48/144 bars are 1h/4h/12h on the 5m interval.
+
+| Group | Params |
+|-------|--------|
+| **Horizons** | `h_fast`, `h_mid`, `h_slow` (bars) |
+| **Signal** | `z_threshold`, `min_agree` (how many horizons must be stretched the same way), `require_fast` |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
+| **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
+
+Any horizon stretched the *opposite* way vetoes the bar — that is a conflict, not
+a signal.
+
+### Polymarket presets
+
+Swept over the whole DB (936,841 5m bars, ~94k combinations), same admission
+rules as the others:
+
+| Preset | Bets | Hit | 2024-26 bets | 2024-26 hit | Worst yr | z |
+|--------|-----:|----:|-------------:|------------:|---------:|--:|
+| **PM 5m Volume** | 55,277 | 55.12% | 16,865 | 53.12% | 50.30% | 24.1 |
+| **PM 5m Balanced** | 40,342 | 57.48% | 10,805 | **56.25%** | 50.36% | **30.0** |
+| **PM 5m Selective** | 21,706 | 57.45% | 3,105 | 57.65% | 50.66% | 22.0 |
+| **PM 5m Hi Hit** | 8,315 | 58.99% | 2,027 | 58.26% | 53.95% | 16.4 |
+| **PM 5m Max Hit** | 3,798 | 60.80% | 582 | 61.00% | **55.24%** | 13.3 |
+
+**This is the strongest strategy in the repo.** *Balanced* holds 56.25% across
+10,805 recent bets at z=30.0, and — unlike the other strategies' high-hit
+presets — *Hi Hit* and *Max Hit* rest on real samples: every year from 2017 to
+2026 lands between 53.9% and 63.2%, so neither leans on one lucky regime.
+
+Three findings came out of the sweep:
+
+- **Reversion only, again.** All 4,304 passing combinations were Reversion, zero
+  Continuation. That now holds across three independent strategies — on BTC 5m,
+  stretch reverts.
+- **The veto matters more than the agreement.** The best configs use
+  `min_agree = 1`, so they do *not* demand horizons line up. The edge comes from
+  the other half of the rule: no horizon may disagree. Multi-horizon pays off as
+  a **conflict filter**, not a confirmation stack.
+- **"With Trend" here**, which combined with Reversion means buying a
+  down-stretch while price is above the MA — buy the dip in an uptrend. (Volume
+  Exhaustion preferred *Against* Trend; different setups, no contradiction.)
+
+## Volume Exhaustion (strategy #7)
+
+*Fade the climax bar.* A decisive bar printed on abnormally heavy volume is often
+the **end** of a move rather than the start of one — the crowd that wanted in has
+just piled in. Because BTC's raw volume grows by orders of magnitude across the
+history, "abnormal" is measured two scale-free ways at once: **relative volume**
+(bar volume ÷ its own rolling mean) and **volume percentile** (its rank inside a
+longer window, robust to a single outlier dragging that mean).
+
+| Group | Params |
+|-------|--------|
+| **Volume** | `vol_ma_length`, `vol_spike_mult` (× rolling avg), `vol_rank_lookback`, `vol_rank_min` (percentile gate; 0 disables) |
+| **Candle** | `min_body_ratio` (the bar must be decisive), `wick_min` (rejection wick; 0 disables) |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic` (With/Against), `ma_type` (SMA/EMA/WMA/RMA), `ma_length`, `source` |
+| **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
+
+### Polymarket presets
+
+Swept over the whole DB (936,841 5m bars, ~242k combinations), same admission
+rules as CCI Williams — win every calendar year, clear 53% in 2024-26 alone, be
+statistically significant:
+
+| Preset | Bets | Hit | 2024-26 bets | 2024-26 hit | z |
+|--------|-----:|----:|-------------:|------------:|--:|
+| **PM 5m Volume** | 64,894 | 54.52% | 19,494 | 53.07% | 23.0 |
+| **PM 5m Balanced** | 38,149 | 55.82% | 11,244 | 54.70% | 22.7 |
+| **PM 5m Selective** | 24,513 | 56.28% | 7,825 | 55.19% | 19.7 |
+| **PM 5m Hi Hit** | 9,415 | 56.40% | 1,772 | 57.51% | 12.4 |
+| **PM 5m Max Hit** | 1,062 | 57.16% | 230 | 66.09% | 4.7 |
+
+Two structural findings shaped these. **Reversion only** — of 9,221 combinations
+that passed the filters, *all* 9,221 were Reversion and none were Continuation;
+fading the climax is the edge, riding it is the same edge inverted. And
+**Against Trend helps** — only fading an up-climax while price is *above* the MA
+(and vice versa) stacks a second mean-reversion condition, worth about a point
+of hit rate at equal volume.
+
+⚠️ **Max Hit is the thinnest result in this repo** — z of 4.7 against 20+ for the
+others, ~120 bets/year, and its edge sits almost entirely in 2023-26. Treat it as
+a lead to validate rather than a settled edge. *Hi Hit* is the best
+risk-adjusted pick: worst year 52.2% at z=12.4.
+
+## CCI Williams (strategy #9)
+
+*Two oscillators must agree.* **CCI** says how far the typical price has stretched
+from its own mean (in units of that window's average deviation); **Williams %R**
+says where the close sits inside the window's high-low *range*. Either alone
+fires constantly in a trend — together they pin down the exhaustion state:
+stretched from the mean **and** stuck at the range extreme. An optional candle
+filter then demands visible rejection, and a volatility band skips dead tape.
+
+| Group | Params |
+|-------|--------|
+| **Core** | `cci_length`, `cci_threshold`, `wr_length`, `wr_overbought`, `wr_oversold` |
+| **Candle** | `use_wick_confirm` ☑, `wick_min` (rejection wick / range), `close_recover_min` (how far the close backed off the extreme) |
+| **Volatility** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
+
+`%R` runs **-100…0**, so "overbought" is the *less negative* end (e.g. `-20`) and
+oversold the more negative (`-80`). Up-exhaustion = CCI ≥ +threshold **and**
+%R ≥ overbought; the down mirror uses CCI ≤ −threshold and %R ≤ oversold.
+**Reversion** fades that, **Continuation** rides it.
+
+### Polymarket presets
+
+Five presets tuned for **Polymarket up/down** mode (interval 5m) sit on a
+volume-vs-hit-rate frontier, fitted over the **entire** local DB — 936,841 5m
+bars, 2017-08 → 2026-07:
+
+| Preset | Bets | Hit | 2024-26 bets | 2024-26 hit |
+|--------|-----:|----:|-------------:|------------:|
+| **PM 5m Volume** | 98,089 | 56.68% | 32,230 | 54.01% |
+| **PM 5m Balanced** | 59,099 | 57.15% | 18,008 | 55.26% |
+| **PM 5m Selective** | 24,553 | 58.60% | 8,273 | 56.82% |
+| **PM 5m Hi Hit** | 13,518 | 59.48% | 2,709 | 58.10% |
+| **PM 5m Max Hit** | 1,458 | 60.36% | 285 | 63.51% |
+
+Each had to win in *every* calendar year, clear 53% in 2024-26 on its own, and
+be statistically significant — not just look good in aggregate. Two honest
+caveats: **the edge decays** (every preset is several points weaker in 2024-26
+than in 2018-23, so read that column, not the headline), and **2017 is the weak
+year** at ~50% for all but *Max Hit*. Since a bet only pays when hit rate beats
+your odds, *Selective*'s 56.8% recent hit needs entry below ~0.568 to be +EV.
+
 ## Jump Exhaustion (strategy #8)
 
 *"Fade the overshoot."* An abnormal (jump) candle that pushes to a local extreme,
@@ -149,6 +292,67 @@ Parameter groups match the video's config screen:
 
 Presets: **Squeeze Breakout**, **Mean Reversion**, **Trend-Filtered Breakout**.
 
+## Zscore MS (strategy #5)
+
+*Fade the statistical stretch.* A z-score measures how many standard deviations
+price sits from its own mean:
+
+```
+z = (close - SMA(close, z_sma_length)) / StdDev(close, z_std_length)
+```
+
+A large `|z|` means price is stretched; that stretch is optionally confirmed by a
+**Keltner Channel** break, so a signal needs to be extended on both a statistical
+*and* a volatility basis. **Decision** then picks whether to fade it
+(**Reversion**) or ride it (**Momentum**). The SMA and StdDev lookbacks are
+separate on purpose — a short mean with a long deviation window measures
+"far from recent price, relative to normal volatility".
+
+| Group | Params |
+|-------|--------|
+| **Z-Score** | `z_sma_length`, `z_std_length`, `z_upper`, `z_lower` |
+| **Keltner Channel** | `kc_ema_length`, `kc_atr_length`, `kc_mult`, `require_kc_break` ☑ |
+| **Bias MA** | `bias_ema_length`, `bias_slope_lookback`, `use_bias_ma` ☑ |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `vol_min_atr_pct`, `vol_max_atr_pct` |
+| **Decision** | `predict_direction` (Reversion ⋁ Momentum) |
+| **Allowed Trading Window** | shared — see `strategies/common.py` |
+| **Trend Filter** | shared — see `strategies/common.py` |
+
+Presets: **Polymarket 5m (Reversion)**, **Polymarket 5m (Best Days)**,
+**Strict Reversion**, **Loose Reversion**, **Momentum**.
+
+## Regime Switch (strategy #6)
+
+*Different market, different playbook.* It measures whether the market is
+**trending or ranging**, then applies the matching logic to the same trigger — a
+Donchian break of the previous `channel_length` bars:
+
+- **Trending regime** → the break is real → trade **with** it (momentum)
+- **Ranging regime** → the break is noise → **fade** it (reversion)
+
+Three interchangeable regime detectors, all normalised to a 0-100 **trend score**
+so one threshold works for any of them: **ADX** (used as-is, classic cut 25),
+**Efficiency Ratio** (Kaufman net-move/path ×100), and **Volatility Ratio**
+(fast ATR / slow ATR ×50, so 50 = flat).
+
+| Group | Params |
+|-------|--------|
+| **Regime Detector** | `regime_method`, `regime_length`, `regime_threshold`, `trade_trend_regime` ☑, `trade_range_regime` ☑ |
+| **Entry Channel** | `channel_length`, `breakout_buffer_atr`, `min_body_ratio` |
+| **Decision** | `regime_mapping` — switch by regime, invert, or force Always Reversion / Always Momentum |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `vol_min_atr_pct`, `vol_max_atr_pct` |
+| **Allowed Trading Window** | shared — see `strategies/common.py` |
+| **Trend Filter** | shared — see `strategies/common.py` |
+
+The `Always Reversion` / `Always Momentum` mappings let the regime detector act
+purely as a **filter** (which bars to trade) rather than a direction switch —
+which is what the tuned Polymarket presets use, since on BTC 5m a channel break
+during a high-efficiency stretch tends to snap back rather than continue.
+
+Presets: **Polymarket 5m (Reversion)**, **Polymarket 5m (Best Days)**,
+**Adaptive (both regimes)**, **Range Only (fade)**, **Trend Only (momentum)**,
+**Efficiency Ratio**.
+
 ## Adding another strategy
 
 1. Create `backend/strategies/<name>.py` with a `Strategy` subclass implementing
@@ -176,6 +380,10 @@ backend/
   strategies/
     base.py          Strategy base class, Param / ParamGroup / Signal
     jump_exhaustion.py
+    bb_squeeze.py
+    cci_williams.py
+    volume_exhaustion.py
+    multi_horizon.py
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)
