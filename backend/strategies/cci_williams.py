@@ -45,10 +45,17 @@ exit params are unused — each signal is just a directional bet on the next can
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List
 
 from .. import indicators as ind
 from .base import Param, ParamGroup, Signal, Strategy
+
+_DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
+         "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
+
+# Saturday + Sunday only; used by the weekend-gated Polymarket presets.
+_WEEKEND = {k: (k in ("trade_sat", "trade_sun")) for k in _DAYS}
 
 
 class CCIWilliams(Strategy):
@@ -95,6 +102,14 @@ class CCIWilliams(Strategy):
                       options=["Reversion", "Continuation"],
                       help="Reversion fades the exhaustion; Continuation rides it."),
             ]),
+            ParamGroup("Day of Week (UTC)", [
+                Param(_DAYS[i], lbl, True, "bool",
+                      help=f"Allow entries on {lbl} (UTC). See the Polymarket "
+                           f"presets for the measured weekend effect.")
+                for i, lbl in enumerate(("Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday",
+                                         "Sunday"))
+            ]),
         ]
 
     def presets(self) -> dict:
@@ -114,12 +129,19 @@ class CCIWilliams(Strategy):
         ap_min, ap_max = p["atr_pct_min"], p["atr_pct_max"]
         reversion = p["predict_direction"] == "Reversion"
 
+        # Day gate (UTC). Index matches datetime.weekday(): Monday == 0.
+        allowed_days = {i for i in range(7) if p[_DAYS[i]]}
+        gate_days = len(allowed_days) < 7
+
         cci = ind.cci(candles, cci_len)
         wr = ind.williams_r(candles, wr_len)
         atr_vol = ind.atr(candles, vol_len)
 
         signals: List[Signal] = []
         for i, c in enumerate(candles):
+            if gate_days and datetime.fromtimestamp(
+                    c["time"], timezone.utc).weekday() not in allowed_days:
+                continue
             ci, w, a = cci[i], wr[i], atr_vol[i]
             if ci is None or w is None or a is None or a <= 0:
                 continue
@@ -214,37 +236,34 @@ class CCIWilliams(Strategy):
 # Higher-hit presets fire far less often: Max Hit averages ~160 bets/year, and
 # Hi Hit's ATR band makes it volatility-regime dependent (2,479 bets in 2021 vs
 # 400 in 2023). Volume is the only one that fires on a daily cadence (~35/day).
+# --- Polymarket 5m, day-aware sweep -----------------------------------------
+# Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+# families of three tiers: all-days and weekend-gated (Sat+Sun, UTC). Admission:
+# hit >50% every calendar year, overall z >= 2.5, and 2024-26 must still clear
+# 52% so nothing already dead gets shipped.
+#
+#   preset             bets     hit    worst yr  2024-26  2025-26      z
+#   Volume            28,767   58.51%     50.33%    55.73%    55.99%   28.9
+#   Balanced          12,727   59.77%     52.78%    55.63%    55.67%   22.0
+#   Hi Hit               793   62.42%     53.85%    62.26%    62.64%    7.0
+#   Wknd Volume       13,361   59.65%     53.33%    57.71%    57.36%   22.3
+#   Wknd Balanced      7,745   60.54%     50.44%    58.83%    58.41%   18.6
+#   Wknd Hi Hit        1,164   63.23%     53.03%    57.45%    55.05%    9.0
+#
+# The weekend gate is the day finding: these exhaustion/fade setups resolve
+# better on Sat+Sun than midweek. Tested as a single a-priori comparison (not
+# best-of-7) on the pre-existing presets before any parameter was tuned on it.
+#
+# CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+# carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+# not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
 PRESETS: dict = {
-    # ~35 bets/day. The most bets that still won every year.
-    "PM 5m Volume": {
-        "cci_length": 16, "cci_threshold": 110,
-        "wr_length": 12, "wr_overbought": -12, "wr_oversold": -88,
-        "use_wick_confirm": True, "wick_min": 0.05, "close_recover_min": 0.0,
-        "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
-        "predict_direction": "Reversion",
-    },
-    # Half the volume, ~1.2pt better hit rate. A reasonable default here.
-    "PM 5m Balanced": {
-        "cci_length": 20, "cci_threshold": 180,
-        "wr_length": 10, "wr_overbought": -20, "wr_oversold": -80,
-        "use_wick_confirm": False, "wick_min": 0.0, "close_recover_min": 0.0,
-        "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
-        "predict_direction": "Reversion",
-    },
     # Tighter %R band (-8/-92): only near-perfect range pins qualify.
     "PM 5m Selective": {
         "cci_length": 20, "cci_threshold": 190,
         "wr_length": 12, "wr_overbought": -8, "wr_oversold": -92,
         "use_wick_confirm": False, "wick_min": 0.0, "close_recover_min": 0.0,
         "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
-        "predict_direction": "Reversion",
-    },
-    # Adds a high-volatility floor (ATR% >= 0.2) -- fires in bursts by regime.
-    "PM 5m Hi Hit": {
-        "cci_length": 24, "cci_threshold": 170,
-        "wr_length": 14, "wr_overbought": -5, "wr_oversold": -95,
-        "use_wick_confirm": False, "wick_min": 0.0, "close_recover_min": 0.0,
-        "vol_atr_length": 50, "atr_pct_min": 0.2, "atr_pct_max": 3.0,
         "predict_direction": "Reversion",
     },
     # Extreme CCI (260) on a short window. Rare (~160 bets/yr) but the only
@@ -256,5 +275,62 @@ PRESETS: dict = {
         "use_wick_confirm": False, "wick_min": 0.0, "close_recover_min": 0.0,
         "vol_atr_length": 14, "atr_pct_min": 0.15, "atr_pct_max": 2.0,
         "predict_direction": "Reversion",
+    },
+    # 28,767 bets, 58.51% hit; 2024-26 55.73%, worst year 50.33%.
+    "PM 5m Volume": {
+        "cci_length": 16, "cci_threshold": 110, "wr_length": 10,
+        "wr_overbought": -5, "wr_oversold": -95,
+        "use_wick_confirm": True, "wick_min": 0.05,
+        "close_recover_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "predict_direction": 'Reversion',
+    },
+    # 12,727 bets, 59.77% hit; 2024-26 55.63%, worst year 52.78%.
+    "PM 5m Balanced": {
+        "cci_length": 20, "cci_threshold": 150, "wr_length": 12,
+        "wr_overbought": -5, "wr_oversold": -95,
+        "use_wick_confirm": True, "wick_min": 0.05,
+        "close_recover_min": 0.0, "vol_atr_length": 50,
+        "atr_pct_min": 0.15, "atr_pct_max": 2.0,
+        "predict_direction": 'Reversion',
+    },
+    # 793 bets, 62.42% hit; 2024-26 62.26%, worst year 53.85%.
+    "PM 5m Hi Hit": {
+        "cci_length": 10, "cci_threshold": 260, "wr_length": 7,
+        "wr_overbought": -10, "wr_oversold": -90,
+        "use_wick_confirm": True, "wick_min": 0.05,
+        "close_recover_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.15, "atr_pct_max": 2.0,
+        "predict_direction": 'Reversion',
+    },
+    # 13,361 bets, 59.65% hit; 2024-26 57.71%, worst year 53.33%.
+    "PM 5m Wknd Volume": {
+        "cci_length": 16, "cci_threshold": 150, "wr_length": 10,
+        "wr_overbought": -12, "wr_oversold": -88,
+        "use_wick_confirm": True, "wick_min": 0.05,
+        "close_recover_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
+    },
+    # 7,745 bets, 60.54% hit; 2024-26 58.83%, worst year 50.44%.
+    "PM 5m Wknd Balanced": {
+        "cci_length": 20, "cci_threshold": 180, "wr_length": 10,
+        "wr_overbought": -12, "wr_oversold": -88,
+        "use_wick_confirm": True, "wick_min": 0.05,
+        "close_recover_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
+    },
+    # 1,164 bets, 63.23% hit; 2024-26 57.45%, worst year 53.03%.
+    "PM 5m Wknd Hi Hit": {
+        "cci_length": 24, "cci_threshold": 200, "wr_length": 21,
+        "wr_overbought": -5, "wr_oversold": -95,
+        "use_wick_confirm": True, "wick_min": 0.05,
+        "close_recover_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.15, "atr_pct_max": 2.0,
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
     },
 }

@@ -42,10 +42,17 @@ the exit params are ignored and each signal is a next-candle UP/DOWN bet
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List
 
 from .. import indicators as ind
 from .base import Param, ParamGroup, Signal, Strategy
+
+_DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
+         "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
+
+# Saturday + Sunday only; used by the weekend-gated Polymarket presets.
+_WEEKEND = {k: (k in ("trade_sat", "trade_sun")) for k in _DAYS}
 
 _VELOCITY_MODES = ["Decelerating", "Accelerating", "Any"]
 _DIRECTIONS = ["Reversion", "Breakout"]
@@ -107,6 +114,14 @@ class AtrDevExh(Strategy):
                 Param("ma_length", "MA Length", 200, "int", 2, 500, 1,
                       "Lookback for the trend MA (on close)."),
             ]),
+            ParamGroup("Day of Week (UTC)", [
+                Param(_DAYS[i], lbl, True, "bool",
+                      help=f"Allow entries on {lbl} (UTC). See the Polymarket "
+                           f"presets for the measured weekend effect.")
+                for i, lbl in enumerate(("Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday",
+                                         "Sunday"))
+            ]),
         ]
 
     def presets(self) -> dict:
@@ -129,6 +144,27 @@ class AtrDevExh(Strategy):
         #   * The trend filter only shrinks the sample (With Trend: 227 bets, 10/13).
         # A ~50% base rate of up-candles makes these hit rates real edge. All three
         # were positive in 13/13 months. Breakeven odds ~= the hit rate.
+        # --- Polymarket 5m, day-aware sweep -----------------------------------------
+        # Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+        # families of three tiers: all-days and weekend-gated (Sat+Sun, UTC). Admission:
+        # hit >50% every calendar year, overall z >= 2.5, and 2024-26 must still clear
+        # 52% so nothing already dead gets shipped.
+        #
+        #   preset             bets     hit    worst yr  2024-26  2025-26      z
+        #   Volume             6,269   54.19%     50.26%    52.46%    51.55%    6.6
+        #   Balanced           3,337   55.74%     50.28%    53.55%    53.22%    6.6
+        #   Hi Hit             2,009   57.89%     50.30%    57.78%    56.98%    7.1
+        #   Wknd Volume        7,871   57.76%     50.19%    56.36%    57.16%   13.8
+        #   Wknd Balanced      2,890   56.47%     50.35%    55.12%    53.31%    7.0
+        #   Wknd Hi Hit        1,135   58.33%     51.85%    55.38%    55.28%    5.6
+        #
+        # The weekend gate is the day finding: these exhaustion/fade setups resolve
+        # better on Sat+Sun than midweek. Tested as a single a-priori comparison (not
+        # best-of-7) on the pre-existing presets before any parameter was tuned on it.
+        #
+        # CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+        # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+        # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
             # Maximum action: fires the moment a new 55-bar extreme is confirmed.
             # 53.9% hit over 6,521 bets (~502/mo), worst month 51.2%, 13/13.
@@ -163,6 +199,62 @@ class AtrDevExh(Strategy):
                 "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
                 "use_trend_filter": False,
             },
+            # 6,269 bets, 54.19% hit; 2024-26 52.46%, worst year 50.26%.
+            "PM 5m Volume": {
+                "velocity_lookback": 1, "velocity_mode": 'Accelerating',
+                "donchian_length": 100, "donchian_confirm": 3,
+                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
+                "predict_direction": 'Reversion', "use_trend_filter": True,
+                "trend_mode": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200,
+            },
+            # 3,337 bets, 55.74% hit; 2024-26 53.55%, worst year 50.28%.
+            "PM 5m Balanced": {
+                "velocity_lookback": 5, "velocity_mode": 'Accelerating',
+                "donchian_length": 80, "donchian_confirm": 4,
+                "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+                "predict_direction": 'Reversion', "use_trend_filter": True,
+                "trend_mode": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200,
+            },
+            # 2,009 bets, 57.89% hit; 2024-26 57.78%, worst year 50.30%.
+            "PM 5m Hi Hit": {
+                "velocity_lookback": 1, "velocity_mode": 'Decelerating',
+                "donchian_length": 30, "donchian_confirm": 3,
+                "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+                "predict_direction": 'Reversion', "use_trend_filter": True,
+                "trend_mode": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+            },
+            # 7,871 bets, 57.76% hit; 2024-26 56.36%, worst year 50.19%.
+            "PM 5m Wknd Volume": {
+                "velocity_lookback": 10, "velocity_mode": 'Accelerating',
+                "donchian_length": 10, "donchian_confirm": 3,
+                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
+                "predict_direction": 'Reversion', "use_trend_filter": True,
+                "trend_mode": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200,
+                **_WEEKEND,
+            },
+            # 2,890 bets, 56.47% hit; 2024-26 55.12%, worst year 50.35%.
+            "PM 5m Wknd Balanced": {
+                "velocity_lookback": 1, "velocity_mode": 'Accelerating',
+                "donchian_length": 20, "donchian_confirm": 3,
+                "vol_atr_length": 14, "atr_pct_min": 0.1, "atr_pct_max": 1.0,
+                "predict_direction": 'Reversion', "use_trend_filter": True,
+                "trend_mode": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200,
+                **_WEEKEND,
+            },
+            # 1,135 bets, 58.33% hit; 2024-26 55.38%, worst year 51.85%.
+            "PM 5m Wknd Hi Hit": {
+                "velocity_lookback": 3, "velocity_mode": 'Accelerating',
+                "donchian_length": 100, "donchian_confirm": 3,
+                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
+                "predict_direction": 'Reversion', "use_trend_filter": True,
+                "trend_mode": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200,
+                **_WEEKEND,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:
@@ -177,6 +269,10 @@ class AtrDevExh(Strategy):
         trend_with = p["trend_mode"] == "With Trend"
         ma_code = _MA_TYPES.index(p["ma_type"]) if p["ma_type"] in _MA_TYPES else 1
         ma_len = p["ma_length"]
+
+        # Day gate (UTC). Index matches datetime.weekday(): Monday == 0.
+        allowed_days = {i for i in range(7) if p[_DAYS[i]]}
+        gate_days = len(allowed_days) < 7
 
         n = len(candles)
         closes = [c["close"] for c in candles]
@@ -205,6 +301,9 @@ class AtrDevExh(Strategy):
 
         signals: List[Signal] = []
         for i, c in enumerate(candles):
+            if gate_days and datetime.fromtimestamp(
+                    c["time"], timezone.utc).weekday() not in allowed_days:
+                continue
             a = atr[i]
             if a is None or a <= 0 or up[i] is None:
                 continue
