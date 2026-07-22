@@ -106,6 +106,31 @@ class ZScoreMS(Strategy):
         ]
 
     def presets(self) -> dict:
+        # --- Polymarket 5m, day-aware sweep -----------------------------------------
+        # Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+        # families of three tiers: all-days and weekend-gated (Sat+Sun, UTC) via the
+        # shared Allowed Trading Window group.
+        #
+        # Admission: hit >50% in every calendar year THAT HAS AT LEAST 25 BETS, overall
+        # z >= 2.5, and 2024-26 must still clear 52%. The 25-bet floor matters: 2017 is
+        # a partial year (Aug-Dec) and on thin presets holds too little to be evidence.
+        #
+        #   preset             bets     hit    worst yr  2024-26  2025-26      z
+        #   Volume            20,689   58.59%     51.20%    57.57%    57.49%   24.7
+        #   Balanced          10,546   59.12%     51.56%    56.15%    55.54%   18.7
+        #   Hi Hit               871   63.15%     57.14%    67.89%    65.14%    7.8
+        #   Wknd Volume        6,048   59.06%     50.45%    59.31%    59.24%   14.1
+        #   Wknd Balanced      3,068   58.87%     50.44%    57.23%    56.42%    9.8
+        #   Wknd Hi Hit          738   63.28%     57.25%    70.59%    66.40%    7.2
+        #
+        # Strongest weekend evidence in the repo. Holding parameters fixed on the old
+        # Polymarket 5m (Reversion) preset and splitting by day: weekend +2.85pp
+        # (z=+5.08) over the full record, +3.91pp (z=+3.87) over 2024-26 and +3.19pp
+        # (z=+2.45) over 2025-26 -- it is strengthening, not fading.
+        #
+        # CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+        # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+        # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
             # Tuned for the Polymarket 5-min UP/DOWN mode (set Mode = "Polymarket
             # up/down", interval 5m). Chosen by next-candle directional hit rate
@@ -153,6 +178,90 @@ class ZScoreMS(Strategy):
             "Momentum": {
                 "predict_direction": "Momentum", "z_upper": 2.0, "z_lower": -2.0,
                 "require_kc_break": True, "kc_mult": 1.5, "use_bias_ma": True,
+            },
+            # 20,689 bets, 58.59% hit; 2024-26 57.57%, worst year 51.20%.
+            "PM 5m Volume": {
+                "z_sma_length": 20, "z_std_length": 20, "z_upper": 2.0,
+                "z_lower": -2.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.5, "use_bias_ma": True,
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "vol_atr_length": 50, "vol_min_atr_pct": 0.05,
+                "vol_max_atr_pct": 1.5, "predict_direction": 'Reversion',
+                "use_trading_window": False, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close',
+            },
+            # 10,546 bets, 59.12% hit; 2024-26 56.15%, worst year 51.56%.
+            "PM 5m Balanced": {
+                "z_sma_length": 20, "z_std_length": 20, "z_upper": 2.0,
+                "z_lower": -2.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.0, "use_bias_ma": False,
+                "bias_ema_length": 50, "bias_slope_lookback": 5,
+                "vol_atr_length": 50, "vol_min_atr_pct": 0.2,
+                "vol_max_atr_pct": 3.0, "predict_direction": 'Reversion',
+                "use_trading_window": False, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close',
+            },
+            # 871 bets, 63.15% hit; 2024-26 67.89%, worst year 57.14%.
+            "PM 5m Hi Hit": {
+                "z_sma_length": 50, "z_std_length": 50, "z_upper": 3.0,
+                "z_lower": -3.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.5, "use_bias_ma": False,
+                "bias_ema_length": 50, "bias_slope_lookback": 5,
+                "vol_atr_length": 14, "vol_min_atr_pct": 0.05,
+                "vol_max_atr_pct": 1.5, "predict_direction": 'Reversion',
+                "use_trading_window": False, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close',
+            },
+            # 6,048 bets, 59.06% hit; 2024-26 59.31%, worst year 50.45%.
+            "PM 5m Wknd Volume": {
+                "z_sma_length": 50, "z_std_length": 50, "z_upper": 3.0,
+                "z_lower": -3.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.5, "use_bias_ma": False,
+                "bias_ema_length": 50, "bias_slope_lookback": 5,
+                "vol_atr_length": 50, "vol_min_atr_pct": 0.05,
+                "vol_max_atr_pct": 1.5, "predict_direction": 'Reversion',
+                "use_trading_window": True, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close', "trade_mon": False, "trade_tue": False,
+                "trade_wed": False, "trade_thu": False, "trade_fri": False,
+                "trade_sat": True, "trade_sun": True,
+            },
+            # 3,068 bets, 58.87% hit; 2024-26 57.23%, worst year 50.44%.
+            "PM 5m Wknd Balanced": {
+                "z_sma_length": 50, "z_std_length": 50, "z_upper": 1.5,
+                "z_lower": -1.5, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.5, "use_bias_ma": True,
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "vol_atr_length": 14, "vol_min_atr_pct": 0.0,
+                "vol_max_atr_pct": 20.0, "predict_direction": 'Reversion',
+                "use_trading_window": True, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200, "source": 'close', "trade_mon": False,
+                "trade_tue": False, "trade_wed": False, "trade_thu": False,
+                "trade_fri": False, "trade_sat": True, "trade_sun": True,
+            },
+            # 738 bets, 63.28% hit; 2024-26 70.59%, worst year 57.25%.
+            "PM 5m Wknd Hi Hit": {
+                "z_sma_length": 50, "z_std_length": 50, "z_upper": 3.0,
+                "z_lower": -3.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.5, "use_bias_ma": True,
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "vol_atr_length": 14, "vol_min_atr_pct": 0.0,
+                "vol_max_atr_pct": 20.0, "predict_direction": 'Reversion',
+                "use_trading_window": True, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close', "trade_mon": False, "trade_tue": False,
+                "trade_wed": False, "trade_thu": False, "trade_fri": False,
+                "trade_sat": True, "trade_sun": True,
             },
         }
 

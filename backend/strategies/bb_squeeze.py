@@ -96,6 +96,33 @@ class BBSqueeze(Strategy):
         ]
 
     def presets(self) -> dict:
+        # --- Polymarket 5m, day-aware sweep -----------------------------------------
+        # Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+        # families of three tiers: all-days and weekend-gated (Sat+Sun, UTC) via the
+        # shared Allowed Trading Window group.
+        #
+        # Admission: hit >50% in every calendar year THAT HAS AT LEAST 25 BETS, overall
+        # z >= 2.5, and 2024-26 must still clear 52%. The 25-bet floor matters: 2017 is
+        # a partial year (Aug-Dec) and on thin presets holds too little to be evidence.
+        #
+        #   preset             bets     hit    worst yr  2024-26  2025-26      z
+        #   Volume            18,619   58.04%     50.43%    55.42%    54.97%   21.9
+        #   Balanced           6,737   59.54%     50.86%    57.94%    57.76%   15.7
+        #   Hi Hit             1,612   62.22%     52.91%    61.88%    63.06%    9.8
+        #   Wknd Volume        2,960   60.30%     50.83%    58.59%    62.22%   11.2
+        #   Wknd Balanced      1,119   61.04%     52.38%    66.27%    64.25%    7.4
+        #   Wknd Hi Hit          684   63.16%     56.63%    68.90%    68.64%    6.9
+        #
+        # The weekend gate is real but MILD here, and weaker recently. Parameters held
+        # fixed on the old Polymarket 5m (Reversion) / (Hi Hit) presets: weekend
+        # +1.33pp (z=+2.18) and +1.31pp (z=+2.50) over the full record, but only
+        # +1.34pp (z=+1.13) and +0.98pp (z=+0.96) over 2024-26 -- no longer significant.
+        # The Wknd tiers below are consequently part day effect, part parameters fitted
+        # to weekend bars; do not read their gap over the all-days tiers as pure edge.
+        #
+        # CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+        # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+        # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
             # --- Tuned on BTCUSDT 15m, 2026-06-21..07-21 (set the interval to 15m
             #     to reproduce). These use a tight TP / wide SL, which lifts win
@@ -171,6 +198,96 @@ class BBSqueeze(Strategy):
                 "bw_squeeze_pct": 25, "use_ema_bias": True,
                 "use_trend_filter": True, "trend_logic": "With Trend",
                 "ma_type": "EMA", "ma_length": 200, "min_body_ratio": 0.45,
+            },
+            # 18,619 bets, 58.04% hit; 2024-26 55.42%, worst year 50.43%.
+            "PM 5m Volume": {
+                "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.0,
+                "pctb_lower": 0.0, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": False,
+                "ema_bias_length": 50, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.2, "vol_atr_length": 14,
+                "vol_min_atr_pct": 0.05, "vol_max_atr_pct": 1.5,
+                "predict_direction": 'Reversion', "use_trading_window": False,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close',
+            },
+            # 6,737 bets, 59.54% hit; 2024-26 57.94%, worst year 50.86%.
+            "PM 5m Balanced": {
+                "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.05,
+                "pctb_lower": -0.05, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": False,
+                "ema_bias_length": 50, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.2, "vol_atr_length": 50,
+                "vol_min_atr_pct": 0.2, "vol_max_atr_pct": 3.0,
+                "predict_direction": 'Reversion', "use_trading_window": False,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close',
+            },
+            # 1,612 bets, 62.22% hit; 2024-26 61.88%, worst year 52.91%.
+            "PM 5m Hi Hit": {
+                "bb_length": 20, "bb_mult": 2.5, "pctb_upper": 1.05,
+                "pctb_lower": -0.05, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": False,
+                "ema_bias_length": 50, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.2, "vol_atr_length": 50,
+                "vol_min_atr_pct": 0.2, "vol_max_atr_pct": 3.0,
+                "predict_direction": 'Reversion', "use_trading_window": False,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close',
+            },
+            # 2,960 bets, 60.30% hit; 2024-26 58.59%, worst year 50.83%.
+            "PM 5m Wknd Volume": {
+                "bb_length": 50, "bb_mult": 2.5, "pctb_upper": 1.05,
+                "pctb_lower": -0.05, "bw_lookback": 200, "bw_squeeze_pct": 40,
+                "require_squeeze": True, "use_ema_bias": False,
+                "ema_bias_length": 50, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.0, "vol_atr_length": 14,
+                "vol_min_atr_pct": 0.05, "vol_max_atr_pct": 1.5,
+                "predict_direction": 'Reversion', "use_trading_window": True,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200, "source": 'close', "trade_mon": False,
+                "trade_tue": False, "trade_wed": False, "trade_thu": False,
+                "trade_fri": False, "trade_sat": True, "trade_sun": True,
+            },
+            # 1,119 bets, 61.04% hit; 2024-26 66.27%, worst year 52.38%.
+            "PM 5m Wknd Balanced": {
+                "bb_length": 50, "bb_mult": 2.5, "pctb_upper": 1.05,
+                "pctb_lower": -0.05, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": True,
+                "ema_bias_length": 200, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.0, "vol_atr_length": 50,
+                "vol_min_atr_pct": 0.05, "vol_max_atr_pct": 1.5,
+                "predict_direction": 'Reversion', "use_trading_window": True,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": 'With Trend', "ma_type": 'EMA', "ma_length": 200,
+                "source": 'close', "trade_mon": False, "trade_tue": False,
+                "trade_wed": False, "trade_thu": False, "trade_fri": False,
+                "trade_sat": True, "trade_sun": True,
+            },
+            # 684 bets, 63.16% hit; 2024-26 68.90%, worst year 56.63%.
+            "PM 5m Wknd Hi Hit": {
+                "bb_length": 50, "bb_mult": 2.5, "pctb_upper": 1.05,
+                "pctb_lower": -0.05, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": True,
+                "ema_bias_length": 200, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.2, "vol_atr_length": 14,
+                "vol_min_atr_pct": 0.0, "vol_max_atr_pct": 20.0,
+                "predict_direction": 'Reversion', "use_trading_window": True,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": 'Against Trend', "ma_type": 'EMA',
+                "ma_length": 200, "source": 'close', "trade_mon": False,
+                "trade_tue": False, "trade_wed": False, "trade_thu": False,
+                "trade_fri": False, "trade_sat": True, "trade_sun": True,
             },
         }
 
