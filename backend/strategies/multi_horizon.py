@@ -59,10 +59,17 @@ The Vol ATR sizes TP/SL; in Polymarket up/down mode the exit params are unused.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List
 
 from .. import indicators as ind
 from .base import Param, ParamGroup, Signal, Strategy
+
+_DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
+         "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
+
+# Saturday + Sunday only; used by the weekend-gated Polymarket presets.
+_WEEKEND = {k: (k in ("trade_sat", "trade_sun")) for k in _DAYS}
 
 
 class MultiHorizon(Strategy):
@@ -128,6 +135,15 @@ class MultiHorizon(Strategy):
                       options=["Reversion", "Continuation"],
                       help="Reversion fades the stretch; Continuation rides it."),
             ]),
+            ParamGroup("Day of Week (UTC)", [
+                Param(_DAYS[i], lbl, True, "bool",
+                      help=f"Allow entries on {lbl} (UTC). See the Polymarket "
+                           f"presets -- the weekend premium here is weak and has "
+                           f"faded, unlike in Jump Exhaustion or CCI Williams.")
+                for i, lbl in enumerate(("Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday",
+                                         "Sunday"))
+            ]),
         ]
 
     def presets(self) -> dict:
@@ -138,6 +154,10 @@ class MultiHorizon(Strategy):
         n = len(candles)
         if n == 0:
             return []
+
+        # Day gate (UTC). Index matches datetime.weekday(): Monday == 0.
+        allowed_days = {i for i in range(7) if p[_DAYS[i]]}
+        gate_days = len(allowed_days) < 7
 
         closes = [c["close"] for c in candles]
         horizons = [p["h_fast"], p["h_mid"], p["h_slow"]]
@@ -168,6 +188,9 @@ class MultiHorizon(Strategy):
 
         signals: List[Signal] = []
         for i, c in enumerate(candles):
+            if gate_days and datetime.fromtimestamp(
+                    c["time"], timezone.utc).weekday() not in allowed_days:
+                continue
             a = atr_vol[i]
             if a is None or a <= 0:
                 continue
@@ -381,33 +404,36 @@ class MultiHorizon(Strategy):
 #
 # A bet pays only when hit rate > your odds: Volume's 55.64% needs entry below
 # ~0.5564, Balanced's 56.31% below ~0.5631.
+# --- Polymarket 5m, day-aware sweep -----------------------------------------
+# Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+# families of three tiers: all-days and weekend-gated (Sat+Sun, UTC).
+#
+# Admission: hit >50% in every calendar year THAT HAS AT LEAST 25 BETS, overall
+# z >= 2.5, and 2024-26 must still clear 52%. The 25-bet floor matters: 2017 is
+# a partial year (Aug-Dec) and on thin presets holds too little to be evidence.
+#
+#   preset             bets     hit    worst yr  2024-26  2025-26      z
+#   Volume            22,127   58.17%     50.35%    56.25%    56.03%   24.3
+#   Balanced          12,568   59.06%     51.35%    55.65%    57.16%   20.3
+#   Hi Hit             1,049   65.49%     53.57%    66.00%    64.38%   10.0
+#   Wknd Volume        5,457   60.42%     51.42%    58.73%    57.92%   15.4
+#   Wknd Balanced      3,554   61.23%     52.46%    58.85%    57.75%   13.4
+#   Wknd Hi Hit        1,974   61.90%     54.24%    59.96%    61.77%   10.6
+#
+# THE WEEKEND GATE IS WEAK HERE -- read this before using the Wknd tiers.
+# Holding parameters fixed and splitting by day, the weekend premium on the
+# previous presets was +1.11 / +1.41pp (z=+2.14 / +2.49) over the full record
+# but only +0.89 / +0.38pp (z=+0.95 / +0.35) over 2024-26, i.e. gone. On the
+# selective presets it is NEGATIVE and significantly so (old Max Hit, weekend
+# 2025-26: -17.11pp, z=-2.00). So unlike Jump Exhaustion or CCI Williams, the
+# Wknd tiers below are best read as "parameters fitted to weekend bars", not as
+# "the weekend edge" -- the apparent gap vs the all-days tiers is mostly the
+# fit, not a day premium.
+#
+# CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+# carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+# not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
 PRESETS: dict = {
-    # Most bets in the repo AND the highest z (32.4). Found by the re-sweep that
-    # had require_opposing_bar inside the loop, so the entry filter shaped the
-    # parameters instead of being bolted on: with a 0.75xATR opposing body doing
-    # the selecting, both the ATR% window and the trend MA become dead weight and
-    # switch off. Horizons barely matter here — the 25 best configs in this tier
-    # span 6/24/48 to 24/96/288 and all land within 1pp out-of-sample.
-    "PM 5m Volume": {
-        "h_fast": 24, "h_mid": 48, "h_slow": 96,
-        "z_threshold": 2.5, "min_agree": 1, "require_fast": False,
-        "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
-        "require_opposing_bar": True, "opposing_bar_min_atr": 0.75,
-        "use_trend_filter": False, "trend_logic": "With Trend",
-        "ma_type": "EMA", "ma_length": 200, "source": "close",
-        "predict_direction": "Reversion",
-    },
-    # The standout: highest z in the repo (30.5) and 56.31% over 2024-26.
-    # Fast horizon stretched 2.5 sigma, with neither slower horizon opposing it.
-    "PM 5m Balanced": {
-        "h_fast": 24, "h_mid": 72, "h_slow": 216,
-        "z_threshold": 2.5, "min_agree": 1, "require_fast": True,
-        "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
-        "require_opposing_bar": True, "opposing_bar_min_atr": 0.0,
-        "use_trend_filter": False, "trend_logic": "With Trend",
-        "ma_type": "EMA", "ma_length": 200, "source": "close",
-        "predict_direction": "Reversion",
-    },
     # Balanced plus a high-volatility floor. Fires far less often in calm tape.
     "PM 5m Selective": {
         "h_fast": 24, "h_mid": 72, "h_slow": 216,
@@ -415,16 +441,6 @@ PRESETS: dict = {
         "vol_atr_length": 50, "atr_pct_min": 0.2, "atr_pct_max": 3.0,
         "require_opposing_bar": True, "opposing_bar_min_atr": 0.0,
         "use_trend_filter": False, "trend_logic": "With Trend",
-        "ma_type": "EMA", "ma_length": 200, "source": "close",
-        "predict_direction": "Reversion",
-    },
-    # Short horizons (1h/2h/4h) + buy-the-dip trend filter. Worst year 53.95%.
-    "PM 5m Hi Hit": {
-        "h_fast": 12, "h_mid": 24, "h_slow": 48,
-        "z_threshold": 2.5, "min_agree": 1, "require_fast": False,
-        "vol_atr_length": 14, "atr_pct_min": 0.1, "atr_pct_max": 1.0,
-        "require_opposing_bar": True, "opposing_bar_min_atr": 0.0,
-        "use_trend_filter": True, "trend_logic": "With Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
         "predict_direction": "Reversion",
     },
@@ -438,5 +454,68 @@ PRESETS: dict = {
         "use_trend_filter": True, "trend_logic": "With Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
         "predict_direction": "Reversion",
+    },
+    # 22,127 bets, 58.17% hit; 2024-26 56.25%, worst year 50.35%.
+    "PM 5m Volume": {
+        "h_fast": 12, "h_mid": 24, "h_slow": 48, "z_threshold": 3.0,
+        "min_agree": 1, "require_fast": False, "vol_atr_length": 14,
+        "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
+        "use_trend_filter": False, "trend_logic": 'With Trend',
+        "ma_type": 'EMA', "ma_length": 200, "source": 'close',
+        "predict_direction": 'Reversion',
+    },
+    # 12,568 bets, 59.06% hit; 2024-26 55.65%, worst year 51.35%.
+    "PM 5m Balanced": {
+        "h_fast": 12, "h_mid": 24, "h_slow": 96, "z_threshold": 2.0,
+        "min_agree": 1, "require_fast": False, "vol_atr_length": 50,
+        "atr_pct_min": 0.2, "atr_pct_max": 3.0,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
+        "use_trend_filter": True, "trend_logic": 'With Trend',
+        "ma_type": 'EMA', "ma_length": 200, "source": 'close',
+        "predict_direction": 'Reversion',
+    },
+    # 1,049 bets, 65.49% hit; 2024-26 66.00%, worst year 53.57%.
+    "PM 5m Hi Hit": {
+        "h_fast": 12, "h_mid": 24, "h_slow": 48, "z_threshold": 3.0,
+        "min_agree": 1, "require_fast": False, "vol_atr_length": 50,
+        "atr_pct_min": 0.2, "atr_pct_max": 3.0,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
+        "use_trend_filter": True, "trend_logic": 'With Trend',
+        "ma_type": 'EMA', "ma_length": 200, "source": 'close',
+        "predict_direction": 'Reversion',
+    },
+    # 5,457 bets, 60.42% hit; 2024-26 58.73%, worst year 51.42%.
+    "PM 5m Wknd Volume": {
+        "h_fast": 6, "h_mid": 24, "h_slow": 48, "z_threshold": 3.0,
+        "min_agree": 1, "require_fast": False, "vol_atr_length": 50,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.75,
+        "use_trend_filter": False, "trend_logic": 'With Trend',
+        "ma_type": 'EMA', "ma_length": 200, "source": 'close',
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
+    },
+    # 3,554 bets, 61.23% hit; 2024-26 58.85%, worst year 52.46%.
+    "PM 5m Wknd Balanced": {
+        "h_fast": 24, "h_mid": 48, "h_slow": 96, "z_threshold": 3.0,
+        "min_agree": 2, "require_fast": False, "vol_atr_length": 50,
+        "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.75,
+        "use_trend_filter": False, "trend_logic": 'With Trend',
+        "ma_type": 'EMA', "ma_length": 200, "source": 'close',
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
+    },
+    # 1,974 bets, 61.90% hit; 2024-26 59.96%, worst year 54.24%.
+    "PM 5m Wknd Hi Hit": {
+        "h_fast": 6, "h_mid": 24, "h_slow": 48, "z_threshold": 3.0,
+        "min_agree": 2, "require_fast": False, "vol_atr_length": 14,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.75,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'EMA', "ma_length": 200, "source": 'close',
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
     },
 }

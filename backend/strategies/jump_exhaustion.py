@@ -53,6 +53,9 @@ from .base import Param, ParamGroup, Signal, Strategy
 _DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
          "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
 
+# Saturday + Sunday only; used by the weekend-gated Polymarket presets.
+_WEEKEND = {k: (k in ("trade_sat", "trade_sun")) for k in _DAYS}
+
 
 class JumpExhaustion(Strategy):
     id = "jump_exhaustion"
@@ -270,6 +273,31 @@ _SAT_ONLY = {"trade_mon": False, "trade_tue": False, "trade_wed": False,
              "trade_thu": False, "trade_fri": False, "trade_sat": True,
              "trade_sun": False}
 
+# --- Polymarket 5m, day-aware sweep -----------------------------------------
+# Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+# families of three tiers: all-days and weekend-gated (Sat+Sun, UTC).
+#
+# Admission: hit >50% in every calendar year THAT HAS AT LEAST 25 BETS, overall
+# z >= 2.5, and 2024-26 must still clear 52%. The 25-bet floor matters: 2017 is
+# a partial year (Aug-Dec) and on thin presets holds too little to be evidence.
+#
+#   preset             bets     hit    worst yr  2024-26  2025-26      z
+#   Volume            23,010   57.49%     53.37%    55.02%    55.06%   22.7
+#   Balanced          12,666   57.90%     54.73%    55.96%    56.82%   17.8
+#   Hi Hit             3,512   58.66%     52.03%    58.30%    58.60%   10.3
+#   Wknd Volume        7,417   59.15%     52.59%    58.56%    58.28%   15.8
+#   Wknd Balanced      3,096   59.98%     53.00%    57.41%    55.88%   11.1
+#   Wknd Hi Hit        1,402   60.84%     50.52%    59.01%    55.43%    8.1
+#
+# The weekend gate is well supported here. Holding parameters fixed on the
+# All Days preset and splitting by day: weekend +2.28pp (z=+3.50) over the full
+# record, +3.96pp (z=+3.35) over 2024-26 and +3.25pp (z=+2.16) over 2025-26 --
+# it is getting stronger, not fading. The older Sat-only presets remain below;
+# Saturday alone was the earlier finding, and Sat+Sun is the broader version.
+#
+# CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+# carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+# not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
 PRESETS: dict = {
     # The video's settings, kept for reference. Not tuned for Polymarket mode.
     "Aggressive": {
@@ -308,5 +336,50 @@ PRESETS: dict = {
         "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
         "rsi_length": 14, "rsi_overbought": 70, "rsi_oversold": 30,
         "vol_atr_length": 20, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+    },
+    # 23,010 bets, 57.49% hit; 2024-26 55.02%, worst year 53.37%.
+    "PM 5m Volume": {
+        "atr_length": 14, "jump1_atr_mult": 1.3, "jump2_atr_mult": 3.0,
+        "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
+        "rsi_length": 14, "rsi_overbought": 70, "rsi_oversold": 30,
+        "vol_atr_length": 20, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+    },
+    # 12,666 bets, 57.90% hit; 2024-26 55.96%, worst year 54.73%.
+    "PM 5m Balanced": {
+        "atr_length": 30, "jump1_atr_mult": 1.8, "jump2_atr_mult": 3.0,
+        "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
+        "rsi_length": 14, "rsi_overbought": 70, "rsi_oversold": 30,
+        "vol_atr_length": 20, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+    },
+    # 3,512 bets, 58.66% hit; 2024-26 58.30%, worst year 52.03%.
+    "PM 5m Hi Hit": {
+        "atr_length": 14, "jump1_atr_mult": 1.8, "jump2_atr_mult": 3.0,
+        "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
+        "rsi_length": 14, "rsi_overbought": 75, "rsi_oversold": 25,
+        "vol_atr_length": 20, "atr_pct_min": 0.2, "atr_pct_max": 3.0,
+    },
+    # 7,417 bets, 59.15% hit; 2024-26 58.56%, worst year 52.59%.
+    "PM 5m Wknd Volume": {
+        "atr_length": 20, "jump1_atr_mult": 1.3, "jump2_atr_mult": 20.0,
+        "close_extreme_min": 0.6, "wick_min_ratio": 0.0,
+        "rsi_length": 14, "rsi_overbought": 70, "rsi_oversold": 30,
+        "vol_atr_length": 20, "atr_pct_min": 0.05, "atr_pct_max": 1.2,
+        **_WEEKEND,
+    },
+    # 3,096 bets, 59.98% hit; 2024-26 57.41%, worst year 53.00%.
+    "PM 5m Wknd Balanced": {
+        "atr_length": 14, "jump1_atr_mult": 1.3, "jump2_atr_mult": 5.0,
+        "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
+        "rsi_length": 14, "rsi_overbought": 75, "rsi_oversold": 25,
+        "vol_atr_length": 20, "atr_pct_min": 0.05, "atr_pct_max": 1.2,
+        **_WEEKEND,
+    },
+    # 1,402 bets, 60.84% hit; 2024-26 59.01%, worst year 50.52%.
+    "PM 5m Wknd Hi Hit": {
+        "atr_length": 14, "jump1_atr_mult": 1.3, "jump2_atr_mult": 3.0,
+        "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
+        "rsi_length": 14, "rsi_overbought": 75, "rsi_oversold": 25,
+        "vol_atr_length": 20, "atr_pct_min": 0.2, "atr_pct_max": 3.0,
+        **_WEEKEND,
     },
 }
