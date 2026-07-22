@@ -414,6 +414,67 @@ Parameter groups match the video's config screen:
 
 Presets: **Squeeze Breakout**, **Mean Reversion**, **Trend-Filtered Breakout**.
 
+## Zscore MS (strategy #5)
+
+*Fade the statistical stretch.* A z-score measures how many standard deviations
+price sits from its own mean:
+
+```
+z = (close - SMA(close, z_sma_length)) / StdDev(close, z_std_length)
+```
+
+A large `|z|` means price is stretched; that stretch is optionally confirmed by a
+**Keltner Channel** break, so a signal needs to be extended on both a statistical
+*and* a volatility basis. **Decision** then picks whether to fade it
+(**Reversion**) or ride it (**Momentum**). The SMA and StdDev lookbacks are
+separate on purpose — a short mean with a long deviation window measures
+"far from recent price, relative to normal volatility".
+
+| Group | Params |
+|-------|--------|
+| **Z-Score** | `z_sma_length`, `z_std_length`, `z_upper`, `z_lower` |
+| **Keltner Channel** | `kc_ema_length`, `kc_atr_length`, `kc_mult`, `require_kc_break` ☑ |
+| **Bias MA** | `bias_ema_length`, `bias_slope_lookback`, `use_bias_ma` ☑ |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `vol_min_atr_pct`, `vol_max_atr_pct` |
+| **Decision** | `predict_direction` (Reversion ⋁ Momentum) |
+| **Allowed Trading Window** | shared — see `strategies/common.py` |
+| **Trend Filter** | shared — see `strategies/common.py` |
+
+Presets: **Polymarket 5m (Reversion)**, **Polymarket 5m (Best Days)**,
+**Strict Reversion**, **Loose Reversion**, **Momentum**.
+
+## Regime Switch (strategy #6)
+
+*Different market, different playbook.* It measures whether the market is
+**trending or ranging**, then applies the matching logic to the same trigger — a
+Donchian break of the previous `channel_length` bars:
+
+- **Trending regime** → the break is real → trade **with** it (momentum)
+- **Ranging regime** → the break is noise → **fade** it (reversion)
+
+Three interchangeable regime detectors, all normalised to a 0-100 **trend score**
+so one threshold works for any of them: **ADX** (used as-is, classic cut 25),
+**Efficiency Ratio** (Kaufman net-move/path ×100), and **Volatility Ratio**
+(fast ATR / slow ATR ×50, so 50 = flat).
+
+| Group | Params |
+|-------|--------|
+| **Regime Detector** | `regime_method`, `regime_length`, `regime_threshold`, `trade_trend_regime` ☑, `trade_range_regime` ☑ |
+| **Entry Channel** | `channel_length`, `breakout_buffer_atr`, `min_body_ratio` |
+| **Decision** | `regime_mapping` — switch by regime, invert, or force Always Reversion / Always Momentum |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `vol_min_atr_pct`, `vol_max_atr_pct` |
+| **Allowed Trading Window** | shared — see `strategies/common.py` |
+| **Trend Filter** | shared — see `strategies/common.py` |
+
+The `Always Reversion` / `Always Momentum` mappings let the regime detector act
+purely as a **filter** (which bars to trade) rather than a direction switch —
+which is what the tuned Polymarket presets use, since on BTC 5m a channel break
+during a high-efficiency stretch tends to snap back rather than continue.
+
+Presets: **Polymarket 5m (Reversion)**, **Polymarket 5m (Best Days)**,
+**Adaptive (both regimes)**, **Range Only (fade)**, **Trend Only (momentum)**,
+**Efficiency Ratio**.
+
 ## Adding another strategy
 
 1. Create `backend/strategies/<name>.py` with a `Strategy` subclass implementing

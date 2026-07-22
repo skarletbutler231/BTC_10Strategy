@@ -32,18 +32,11 @@ Exit/Backtest group like every other strategy.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import List
 
 from .. import indicators as ind
+from . import common
 from .base import Param, ParamGroup, Signal, Strategy
-
-_DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
-         "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
-_DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday",
-               "Friday", "Saturday", "Sunday"]
-_MA_TYPES = ind.MA_TYPES
-_SOURCES = ind.SOURCES
 
 
 class BBSqueeze(Strategy):
@@ -98,30 +91,8 @@ class BBSqueeze(Strategy):
                       options=["Breakout", "Reversion"],
                       help="Breakout trades the band push; Reversion fades the band tag."),
             ]),
-            ParamGroup("Allowed Trading Window", [
-                Param("use_trading_window", "Use Allowed Trading Window?", False, "bool",
-                      help="Restrict entries to the weekdays and UTC time span below."),
-                *[Param(_DAYS[i], _DAY_LABELS[i], True, "bool",
-                        help=f"Allow entries on {_DAY_LABELS[i]} (UTC).")
-                  for i in range(7)],
-                Param("start_hour", "Start Hour", 0, "int", 0, 23, 1, "Window start hour (UTC, 0-23)."),
-                Param("start_minute", "Start Minute", 0, "int", 0, 59, 1, "Window start minute (UTC)."),
-                Param("end_hour", "End Hour", 23, "int", 0, 23, 1, "Window end hour (UTC, 0-23)."),
-                Param("end_minute", "End Minute", 59, "int", 0, 59, 1, "Window end minute (UTC)."),
-            ]),
-            ParamGroup("Trend Filter", [
-                Param("use_trend_filter", "Use Trend Filter?", False, "bool",
-                      help="Require price to agree with a moving-average trend."),
-                Param("trend_logic", "Trend Logic", "With Trend", "enum",
-                      options=["With Trend", "Against Trend"],
-                      help="With Trend: long above / short below MA. Against Trend: the opposite."),
-                Param("ma_type", "MA Type", "EMA", "enum", options=_MA_TYPES,
-                      help="Moving-average type for the trend filter."),
-                Param("ma_length", "MA Length", 200, "int", 2, 1000, 1,
-                      "Lookback for the trend MA."),
-                Param("source", "Source", "close", "enum", options=_SOURCES,
-                      help="Price source for the trend MA."),
-            ]),
+            common.trading_window_group(),
+            common.trend_filter_group(),
         ]
 
     def presets(self) -> dict:
@@ -166,6 +137,24 @@ class BBSqueeze(Strategy):
                 "predict_direction": "Reversion", "require_squeeze": False,
                 "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
                 "min_body_ratio": 0.0, "use_ema_bias": False,
+            },
+            # Hi Hit restricted to the best weekdays. A day-of-week study over the
+            # FULL history (45,251 bets, 2017-2026) found the reversion edge is
+            # strongest Wed/Thu/Sat and weakest Monday -- consistent across
+            # 2017-26, 2024-26 and 2025-26 (thin weekend/midweek liquidity mean-
+            # reverts more). Hit rate by day-set (all history | last 12 months):
+            #   all days     57.5% | 56.6%
+            #   Wed+Thu+Sat  58.1% | 58.2%   <- this preset
+            #   Mon (worst)  56.2% | ~52% recently
+            "Polymarket 5m (Best Days)": {
+                "predict_direction": "Reversion", "require_squeeze": False,
+                "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_body_ratio": 0.0, "use_ema_bias": False,
+                "use_trading_window": True,
+                "trade_mon": False, "trade_tue": False, "trade_wed": True,
+                "trade_thu": True, "trade_fri": False, "trade_sat": True,
+                "trade_sun": False,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23, "end_minute": 59,
             },
             "Squeeze Breakout": {
                 "predict_direction": "Breakout", "require_squeeze": True,
@@ -216,8 +205,8 @@ class BBSqueeze(Strategy):
         atr_vol = ind.atr(candles, p["vol_atr_length"])
         ema_bias = ind.ema(closes, p["ema_bias_length"])
         slope_bars = p["ema_bias_slope_bars"]
-        trend_ma = ind.ma(ind.price_source(candles, p["source"]),
-                          p["ma_type"], p["ma_length"]) \
+        trend_ma = common.moving_average(
+            common.source_values(candles, p["source"]), p["ma_type"], p["ma_length"]) \
             if p["use_trend_filter"] else [None] * n
 
         # --- decision / filter config ---------------------------------------
@@ -229,9 +218,8 @@ class BBSqueeze(Strategy):
         min_body = p["min_body_ratio"]
         vmin, vmax = p["vol_min_atr_pct"], p["vol_max_atr_pct"]
         use_window = p["use_trading_window"]
-        allowed_days = {i for i in range(7) if p[_DAYS[i]]}
-        start_min = p["start_hour"] * 60 + p["start_minute"]
-        end_min = p["end_hour"] * 60 + p["end_minute"]
+        allowed_days = common.allowed_days(p)
+        start_min, end_min = common.window_minutes(p)
         use_trend = p["use_trend_filter"]
         with_trend = p["trend_logic"] == "With Trend"
 
@@ -284,28 +272,12 @@ class BBSqueeze(Strategy):
                     continue
 
             # Trend filter
-            if use_trend:
-                tm = trend_ma[i]
-                if tm is None:
-                    continue
-                above = cl > tm
-                agree = (side == "long" and above) or (side == "short" and not above)
-                if with_trend and not agree:
-                    continue
-                if not with_trend and agree:
-                    continue
+            if use_trend and not common.trend_ok(side, cl, trend_ma[i], with_trend):
+                continue
 
             # Trading window (weekday + UTC time-of-day, wrap-aware)
-            if use_window:
-                dt = datetime.fromtimestamp(c["time"], timezone.utc)
-                if dt.weekday() not in allowed_days:
-                    continue
-                cur = dt.hour * 60 + dt.minute
-                if start_min <= end_min:
-                    if not (start_min <= cur <= end_min):
-                        continue
-                elif not (cur >= start_min or cur <= end_min):  # overnight window
-                    continue
+            if use_window and not common.in_window(c["time"], allowed_days, start_min, end_min):
+                continue
 
             mode = "breakout" if breakout else "reversion"
             reason = (f"%B {b:.2f} @ {edge} band -> {mode} {side.upper()} "
