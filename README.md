@@ -475,6 +475,73 @@ Presets: **Polymarket 5m (Reversion)**, **Polymarket 5m (Best Days)**,
 **Adaptive (both regimes)**, **Range Only (fade)**, **Trend Only (momentum)**,
 **Efficiency Ratio**.
 
+## RSI + BB (strategy #1)
+
+*Fade the band stretch.* A classic mean-reversion fade: price stretches to a
+Bollinger Band, RSI is at an extreme, and the bar closes back off the extreme.
+
+| Group | Params |
+|-------|--------|
+| **Direction** | `direction` (Both ⋁ Long Only ⋁ Short Only) |
+| **RSI** | `rsi_length`, `rsi_overbought`, `rsi_oversold` |
+| **Bollinger Bands** | `bb_length`, `bb_mult`, `pctb_upper`, `pctb_lower` |
+| **Candle** | `min_wick_ratio`, `min_close_recovery` |
+| **Bias Filter** | `use_bias_filter` ☑, `bias_ema_length`, `bias_slope_bars` |
+| **Volatility** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `ma_source` |
+| **Day of Week (UTC)** | `trade_mon` … `trade_sun` ☑ |
+
+### The weekend, not Saturday
+
+Band fades resolve better at the **weekend** than midweek. Measured on the two
+pre-existing PM presets, weekend (Sat+Sun) vs weekday:
+
+| | Full 2017-26 | 2024-26 | 2025-26 |
+|---|---:|---:|---:|
+| Weekend vs weekday | **+2.71 / +2.87pp** (z=2.17 / 2.55) | +1.81 / +1.37 | +1.77 / +1.99 |
+| Saturday alone vs rest | +3.21 / +3.48pp | **−1.46 / −1.14** | −1.60 / −0.28 |
+
+Saturday alone looks *better* on the full record — and its edge has since gone
+negative, with Sunday becoming the strongest day. Gating on Saturday would be
+fitting to stale history, so the presets gate on the weekend as a pair, which is
+positive on every span. (Jump Exhaustion is the opposite case: there Saturday
+specifically still holds.) Monday is the worst day in both presets, both spans.
+
+### Polymarket presets
+
+A 15,552-combination sweep over the whole DB, scored in Polymarket up/down mode.
+Two families of three tiers. Admission: hit >50% every calendar year, overall
+z ≥ 2.5, and 2024-26 must still clear 52%.
+
+| Preset | Bets | Hit | Worst yr | 2024-26 | 2025-26 | z |
+|--------|-----:|----:|---------:|--------:|--------:|--:|
+| **PM 5m Volume** | 22,569 | 58.31% | 51.54% | 56.82% | 56.59% | **25.0** |
+| **PM 5m Balanced** | 10,977 | 58.70% | 51.95% | 57.16% | 56.23% | 18.2 |
+| **PM 5m Hi Hit** | 734 | **64.03%** | 58.33% | 69.33% | 66.25% | 7.6 |
+| **PM 5m Wknd Volume** | 7,057 | 59.13% | 53.41% | 56.27% | 56.41% | 15.3 |
+| **PM 5m Wknd Balanced** | 4,211 | 60.58% | **54.91%** | **58.42%** | **59.16%** | 13.7 |
+| **PM 5m Wknd Hi Hit** | 991 | 62.06% | 56.58% | 60.32% | 57.50% | 7.6 |
+
+Weekend gating beats all-days at the Volume and Balanced tiers (59.13 vs 58.31,
+60.58 vs 58.70) on about a third of the bets — a real quality-for-quantity trade.
+*Wknd Balanced* is the pick of the six: every year above 54.9%, and the only one
+whose 2025-26 figure beats its 2024-26.
+
+Two findings beyond the numbers:
+
+- **Long Only wins.** Four of six tier winners are Long Only. Buying the oversold
+  lower-band fade beats fading the overbought upper band on 5m BTC.
+- **The candle filters earn nothing.** Every winner sets `min_wick_ratio = 0`
+  *and* `min_close_recovery = 0` — neither the rejection wick nor the recovery
+  close survives measurement.
+
+**Caveats.** These were selected on the full record with **no holdout**, so the
+headline hit rates carry selection bias and the 2024-26 / 2025-26 columns are a
+recency check rather than out-of-sample evidence — budget a few points of
+shrinkage. The Hi Hit tiers are thin (734 and 991 bets, ~80-110/year); *PM 5m
+Hi Hit* shows 69.33% over 2024-26 but on only 150 bets (±4pp standard error), so
+treat it as suggestive. Days are UTC.
+
 ## Adding another strategy
 
 1. Create `backend/strategies/<name>.py` with a `Strategy` subclass implementing

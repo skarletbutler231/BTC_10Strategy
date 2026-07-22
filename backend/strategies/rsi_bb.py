@@ -45,6 +45,7 @@ rejection, bias down, trend side flipped.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List
 
 from .. import indicators as ind
@@ -57,6 +58,11 @@ _DIRECTIONS = ["Both", "Long Only", "Short Only"]
 _TREND_LOGIC = ["With Trend", "Against Trend"]
 _MA_TYPES = ["SMA", "EMA", "WMA", "RMA", "HMA"]
 _SOURCES = ["close", "open", "high", "low", "hl2", "hlc3", "ohlc4"]
+_DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
+         "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
+
+# Saturday + Sunday only; used by the weekend-gated Polymarket presets.
+_WEEKEND = {k: (k in ("trade_sat", "trade_sun")) for k in _DAYS}
 
 
 class RsiBb(Strategy):
@@ -134,6 +140,15 @@ class RsiBb(Strategy):
                       "Lookback for the trend MA."),
                 Param("ma_source", "Source", "close", "enum", options=_SOURCES,
                       help="Price source for the trend MA."),
+            ]),
+            ParamGroup("Day of Week (UTC)", [
+                Param(_DAYS[i], lbl, True, "bool",
+                      help=f"Allow entries on {lbl} (UTC). Band fades resolve "
+                           f"better at the weekend than midweek — see the "
+                           f"Polymarket presets.")
+                for i, lbl in enumerate(("Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday",
+                                         "Sunday"))
             ]),
         ]
 
@@ -250,6 +265,138 @@ class RsiBb(Strategy):
                 "use_trend_filter": False,
                 "atr_pct_min": 0.08, "atr_pct_max": 5.0,
             },
+            # --- Polymarket 5m, day-aware sweep (2026) ------------------------
+            # A 15,552-combination sweep over the WHOLE DB (936,829 5m bars,
+            # 2017-08 .. 2026-07), scored in Polymarket up/down mode. Two families
+            # of three tiers: all-days, and weekend-gated. Admission: hit >50% in
+            # every calendar year, overall z >= 2.5, and the 2024-26 span must
+            # still clear 52% so nothing already dead gets shipped.
+            #
+            # The day-of-week question
+            # ------------------------
+            # Band fades resolve better at the WEEKEND than midweek. Measured on
+            # the two pre-existing PM presets, weekend (Sat+Sun) vs weekday:
+            # +2.71pp (z=+2.17) and +2.87pp (z=+2.55) over the full history, and
+            # still +1.8 / +1.4pp over 2024-26 and +1.8 / +2.0pp over 2025-26.
+            # Monday is the worst day in both presets on both spans.
+            #
+            # Saturday ALONE looks even better on the full history (+3.21 / +3.48pp)
+            # but that edge has DECAYED: over 2024-26 Saturday is -1.46 / -1.14pp,
+            # i.e. negative, while Sunday became the strongest day. Gating on
+            # Saturday would be fitting to stale history, so the presets gate on
+            # the weekend as a pair, which is positive on every span. (Contrast
+            # Jump Exhaustion, where Saturday specifically does still hold.)
+            #
+            # Measured results (whole DB, flat $1 per bet)
+            # -------------------------------------------
+            #   preset            bets     hit   worst yr   2024-26   2025-26     z
+            #   Volume          22,569  58.31%    51.54%     56.82%    56.59%  25.0
+            #   Balanced        10,977  58.70%    51.95%     57.16%    56.23%  18.2
+            #   Hi Hit             734  64.03%    58.33%     69.33%    66.25%   7.6
+            #   Wknd Volume      7,057  59.13%    53.41%     56.27%    56.41%  15.3
+            #   Wknd Balanced    4,211  60.58%    54.91%     58.42%    59.16%  13.7
+            #   Wknd Hi Hit        991  62.06%    56.58%     60.32%    57.50%   7.6
+            #
+            # Weekend gating beats all-days at the Volume and Balanced tiers
+            # (59.13 vs 58.31, 60.58 vs 58.70) on roughly a third of the bets, so
+            # it is a genuine quality-for-quantity trade rather than a free lunch.
+            #
+            # Two findings beyond the numbers
+            # -------------------------------
+            #   * **Long Only wins.** Four of the six tier winners, and both
+            #     weekend Volume/Balanced tiers, are Long Only. Buying the
+            #     oversold lower-band fade beats fading the overbought upper band
+            #     on 5m BTC -- the short side dilutes the edge.
+            #   * **The candle filters earn nothing.** Every winner sets
+            #     min_wick_ratio = 0 AND min_close_recovery = 0. The rejection
+            #     wick and recovery close are the most intuitive part of the
+            #     setup and neither survives measurement, which extends the
+            #     existing note above (that preset kept recovery at 0.30).
+            #
+            # Caveats
+            # -------
+            # 1. **No holdout.** These were selected on the full record, so the
+            #    headline hit rates carry selection bias. The per-year and
+            #    2024-26 / 2025-26 columns are in-sample too -- they are a
+            #    recency check, not out-of-sample evidence. Budget a few points
+            #    of shrinkage on anything live.
+            # 2. **The Hi Hit tiers are thin**: 734 and 991 bets, ~80-110 a year.
+            #    All Days Hi Hit shows 69.33% over 2024-26 but on only 150 bets
+            #    (+/-4pp standard error); treat it as suggestive, not established.
+            # 3. Days are **UTC** and a bar is stamped by its open time.
+            # 4. 2017 is a partial year (Aug-Dec) and the thinnest sample.
+            #
+            # A bet pays only when hit rate > your odds: Wknd Balanced's 58.42%
+            # over 2024-26 needs entry below ~0.5842.
+            "PM 5m Volume": {
+                "direction": "Long Only",
+                "rsi_length": 7, "rsi_oversold": 30, "rsi_overbought": 70,
+                "bb_length": 20, "bb_mult": 2.0,
+                "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False, "use_trend_filter": False,
+                "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+            },
+            "PM 5m Balanced": {
+                "direction": "Both",
+                "rsi_length": 7, "rsi_oversold": 25, "rsi_overbought": 75,
+                "bb_length": 20, "bb_mult": 2.0,
+                "pctb_upper": 0.9, "pctb_lower": 0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False,
+                "use_trend_filter": True, "trend_logic": "With Trend",
+                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
+                "vol_atr_length": 14, "atr_pct_min": 0.08, "atr_pct_max": 5.0,
+            },
+            # Highest hit rate here, and the thinnest sample -- see caveat 2.
+            "PM 5m Hi Hit": {
+                "direction": "Both",
+                "rsi_length": 7, "rsi_oversold": 25, "rsi_overbought": 75,
+                "bb_length": 50, "bb_mult": 2.5,
+                "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False,
+                "use_trend_filter": True, "trend_logic": "With Trend",
+                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
+                "vol_atr_length": 14, "atr_pct_min": 0.08, "atr_pct_max": 5.0,
+            },
+            "PM 5m Wknd Volume": {
+                "direction": "Long Only",
+                "rsi_length": 7, "rsi_oversold": 25, "rsi_overbought": 75,
+                "bb_length": 20, "bb_mult": 2.0,
+                "pctb_upper": 1.0, "pctb_lower": 0.0,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False,
+                "use_trend_filter": True, "trend_logic": "Against Trend",
+                "ma_type": "EMA", "ma_length": 100, "ma_source": "close",
+                "vol_atr_length": 14, "atr_pct_min": 0.08, "atr_pct_max": 5.0,
+                **_WEEKEND,
+            },
+            # The pick of the six: 60.58% over 4,211 bets, every year above 54.9%,
+            # and the only preset whose 2025-26 number (59.16%) beats its 2024-26.
+            "PM 5m Wknd Balanced": {
+                "direction": "Long Only",
+                "rsi_length": 14, "rsi_oversold": 35, "rsi_overbought": 65,
+                "bb_length": 20, "bb_mult": 2.0,
+                "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False,
+                "use_trend_filter": True, "trend_logic": "Against Trend",
+                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
+                "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+                **_WEEKEND,
+            },
+            "PM 5m Wknd Hi Hit": {
+                "direction": "Long Only",
+                "rsi_length": 14, "rsi_oversold": 30, "rsi_overbought": 70,
+                "bb_length": 50, "bb_mult": 3.0,
+                "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False, "use_trend_filter": False,
+                "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+                **_WEEKEND,
+            },
+
             # 15m markets (Mode = "Polymarket up/down", interval 15m). Real edge
             # but CHOPPIER than 5m: ~57.3% hit over 13 months yet only 8/13 were
             # winning months (worst ~35%), so size stakes conservatively. ~38
@@ -294,6 +441,10 @@ class RsiBb(Strategy):
         ma_len = p["ma_length"]
         ma_src_code = _SOURCES.index(p["ma_source"]) if p["ma_source"] in _SOURCES else 0
 
+        # Day gate (UTC). Index matches datetime.weekday(): Monday == 0.
+        allowed_days = {i for i in range(7) if p[_DAYS[i]]}
+        gate_days = len(allowed_days) < 7
+
         closes = [c["close"] for c in candles]
         rsi = ind.rsi(candles, rsi_len)
         _, bb_hi, bb_lo = ind.bollinger(closes, bb_len, bb_mult)
@@ -307,6 +458,9 @@ class RsiBb(Strategy):
 
         signals: List[Signal] = []
         for i, c in enumerate(candles):
+            if gate_days and datetime.fromtimestamp(
+                    c["time"], timezone.utc).weekday() not in allowed_days:
+                continue
             r, up, lo, a = rsi[i], bb_hi[i], bb_lo[i], atr[i]
             if None in (r, up, lo, a) or a <= 0 or up <= lo:
                 continue
