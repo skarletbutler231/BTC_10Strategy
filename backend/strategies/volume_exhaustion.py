@@ -41,10 +41,17 @@ are unused and each signal is simply a bet on the next candle's direction.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List
 
 from .. import indicators as ind
 from .base import Param, ParamGroup, Signal, Strategy
+
+_DAYS = ["trade_mon", "trade_tue", "trade_wed", "trade_thu",
+         "trade_fri", "trade_sat", "trade_sun"]  # index == datetime.weekday()
+
+# Saturday + Sunday only; used by the weekend-gated Polymarket presets.
+_WEEKEND = {k: (k in ("trade_sat", "trade_sun")) for k in _DAYS}
 
 
 class VolumeExhaustion(Strategy):
@@ -98,6 +105,14 @@ class VolumeExhaustion(Strategy):
                       options=["Reversion", "Continuation"],
                       help="Reversion fades the climax bar; Continuation rides it."),
             ]),
+            ParamGroup("Day of Week (UTC)", [
+                Param(_DAYS[i], lbl, True, "bool",
+                      help=f"Allow entries on {lbl} (UTC). See the Polymarket "
+                           f"presets for the measured weekend effect.")
+                for i, lbl in enumerate(("Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday",
+                                         "Sunday"))
+            ]),
         ]
 
     def presets(self) -> dict:
@@ -108,6 +123,10 @@ class VolumeExhaustion(Strategy):
         n = len(candles)
         if n == 0:
             return []
+
+        # Day gate (UTC). Index matches datetime.weekday(): Monday == 0.
+        allowed_days = {i for i in range(7) if p[_DAYS[i]]}
+        gate_days = len(allowed_days) < 7
 
         vols = [c["volume"] for c in candles]
         vol_avg = ind.sma(vols, p["vol_ma_length"])
@@ -128,6 +147,9 @@ class VolumeExhaustion(Strategy):
 
         signals: List[Signal] = []
         for i, c in enumerate(candles):
+            if gate_days and datetime.fromtimestamp(
+                    c["time"], timezone.utc).weekday() not in allowed_days:
+                continue
             va, a = vol_avg[i], atr_vol[i]
             if va is None or a is None or a <= 0 or va <= 0:
                 continue
@@ -242,27 +264,35 @@ class VolumeExhaustion(Strategy):
 #
 # A bet is profitable only when hit rate > your odds, so Balanced's 54.7% recent
 # hit needs entry below ~0.547.
+# --- Polymarket 5m, day-aware sweep -----------------------------------------
+# Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
+# families of three tiers: all-days and weekend-gated (Sat+Sun, UTC).
+#
+# Admission: hit >50% in every calendar year THAT HAS AT LEAST 25 BETS, overall
+# z >= 2.5, and the 2024-26 span must still clear 52% so nothing already dead
+# gets shipped. The 25-bet floor matters: 2017 is a partial year (Aug-Dec) and
+# on the thinner presets it holds too few bets to be evidence either way, so it
+# is exempt. Where that lets a sub-50% year through it is called out below.
+#
+#   preset             bets     hit    worst yr  2024-26  2025-26      z
+#   Volume            23,619   56.29%     51.56%    55.06%    55.28%   19.3
+#   Balanced          13,880   56.59%     51.72%    55.71%    55.48%   15.5
+#   Hi Hit               687   58.81%     41.18%    59.20%    58.73%    4.6
+#   Wknd Volume        4,738   58.08%     51.00%    58.43%    58.75%   11.1
+#   Wknd Balanced      3,478   58.83%     50.70%    58.91%    59.10%   10.4
+#   Wknd Hi Hit        3,056   58.28%     52.75%    58.75%    59.59%    9.2
+#
+# NOTE: PM 5m Hi Hit's 2017 is 41.18% on 17 bets -- exempt under the 25-bet
+# floor. Every other year is >= 52.4%.
+#
+# The weekend gate is the day finding: these setups resolve better on Sat+Sun
+# than midweek. Tested as a single a-priori comparison (not best-of-7) on the
+# pre-existing presets before any parameter was tuned on it.
+#
+# CAVEAT: selection used the FULL record with NO holdout, so these hit rates
+# carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
+# not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
 PRESETS: dict = {
-    # Loosest volume gate that still won every year. ~20 bets/day.
-    "PM 5m Volume": {
-        "vol_ma_length": 50, "vol_spike_mult": 1.5,
-        "vol_rank_lookback": 500, "vol_rank_min": 90,
-        "min_body_ratio": 0.2, "wick_min": 0.0,
-        "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
-        "use_trend_filter": False, "trend_logic": "With Trend",
-        "ma_type": "EMA", "ma_length": 200, "source": "close",
-        "predict_direction": "Reversion",
-    },
-    # Adds the Against-Trend filter: ~40% fewer bets, ~1.3pt better hit rate.
-    "PM 5m Balanced": {
-        "vol_ma_length": 20, "vol_spike_mult": 1.5,
-        "vol_rank_lookback": 500, "vol_rank_min": 90,
-        "min_body_ratio": 0.2, "wick_min": 0.0,
-        "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
-        "use_trend_filter": True, "trend_logic": "Against Trend",
-        "ma_type": "SMA", "ma_length": 100, "source": "close",
-        "predict_direction": "Reversion",
-    },
     # Same shape, a genuine 2.5x volume spike required.
     "PM 5m Selective": {
         "vol_ma_length": 50, "vol_spike_mult": 2.5,
@@ -271,17 +301,6 @@ PRESETS: dict = {
         "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
         "use_trend_filter": True, "trend_logic": "Against Trend",
         "ma_type": "SMA", "ma_length": 100, "source": "close",
-        "predict_direction": "Reversion",
-    },
-    # Top-5% volume, a big decisive body, and a high-volatility floor.
-    # Best risk-adjusted pick of the five: worst year 52.2% with z=12.4.
-    "PM 5m Hi Hit": {
-        "vol_ma_length": 20, "vol_spike_mult": 1.5,
-        "vol_rank_lookback": 200, "vol_rank_min": 95,
-        "min_body_ratio": 0.6, "wick_min": 0.0,
-        "vol_atr_length": 50, "atr_pct_min": 0.2, "atr_pct_max": 3.0,
-        "use_trend_filter": True, "trend_logic": "Against Trend",
-        "ma_type": "EMA", "ma_length": 50, "source": "close",
         "predict_direction": "Reversion",
     },
     # 4x volume spike AND a 35% rejection wick. Highest hit rate on record here,
@@ -294,5 +313,68 @@ PRESETS: dict = {
         "use_trend_filter": True, "trend_logic": "Against Trend",
         "ma_type": "SMA", "ma_length": 100, "source": "close",
         "predict_direction": "Reversion",
+    },
+    # 23,619 bets, 56.29% hit; 2024-26 55.06%, worst year 51.56%.
+    "PM 5m Volume": {
+        "vol_ma_length": 20, "vol_spike_mult": 2.0,
+        "vol_rank_lookback": 200, "vol_rank_min": 95,
+        "min_body_ratio": 0.2, "wick_min": 0.0, "vol_atr_length": 50,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'SMA', "ma_length": 100, "source": 'close',
+        "predict_direction": 'Reversion',
+    },
+    # 13,880 bets, 56.59% hit; 2024-26 55.71%, worst year 51.72%.
+    "PM 5m Balanced": {
+        "vol_ma_length": 50, "vol_spike_mult": 2.5,
+        "vol_rank_lookback": 500, "vol_rank_min": 90,
+        "min_body_ratio": 0.6, "wick_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'SMA', "ma_length": 100, "source": 'close',
+        "predict_direction": 'Reversion',
+    },
+    # 687 bets, 58.81% hit; 2024-26 59.20%, worst year 41.18%. Thin year(s) below 50%: 2017.
+    "PM 5m Hi Hit": {
+        "vol_ma_length": 50, "vol_spike_mult": 2.5,
+        "vol_rank_lookback": 500, "vol_rank_min": 90,
+        "min_body_ratio": 0.6, "wick_min": 0.35, "vol_atr_length": 14,
+        "atr_pct_min": 0.0, "atr_pct_max": 20.0,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'SMA', "ma_length": 100, "source": 'close',
+        "predict_direction": 'Reversion',
+    },
+    # 4,738 bets, 58.08% hit; 2024-26 58.43%, worst year 51.00%.
+    "PM 5m Wknd Volume": {
+        "vol_ma_length": 50, "vol_spike_mult": 1.5,
+        "vol_rank_lookback": 200, "vol_rank_min": 95,
+        "min_body_ratio": 0.6, "wick_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'EMA', "ma_length": 50, "source": 'close',
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
+    },
+    # 3,478 bets, 58.83% hit; 2024-26 58.91%, worst year 50.70%.
+    "PM 5m Wknd Balanced": {
+        "vol_ma_length": 50, "vol_spike_mult": 2.5,
+        "vol_rank_lookback": 200, "vol_rank_min": 95,
+        "min_body_ratio": 0.6, "wick_min": 0.0, "vol_atr_length": 50,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'EMA', "ma_length": 50, "source": 'close',
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
+    },
+    # 3,056 bets, 58.28% hit; 2024-26 58.75%, worst year 52.75%.
+    "PM 5m Wknd Hi Hit": {
+        "vol_ma_length": 50, "vol_spike_mult": 4.0,
+        "vol_rank_lookback": 200, "vol_rank_min": 0,
+        "min_body_ratio": 0.2, "wick_min": 0.0, "vol_atr_length": 50,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": True, "trend_logic": 'Against Trend',
+        "ma_type": 'SMA', "ma_length": 100, "source": 'close',
+        "predict_direction": 'Reversion',
+        **_WEEKEND,
     },
 }
