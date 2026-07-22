@@ -147,23 +147,40 @@ function buildQuickSetup(schema) {
   syncQuickState();
 }
 
-/** Keep the "N of M" hint honest and clamp min_agree to what's enabled. */
+/** Keep the hint honest, clamp min_agree, and grey out the AND-only controls. */
 function syncQuickState() {
   const boxes = [...document.querySelectorAll('#quickList [data-use]')];
   const on = boxes.filter((b) => b.checked).length;
   boxes.forEach((b) => b.closest('.srow').classList.toggle('off', !b.checked));
+
+  const orMode = $('agreeMode').value === 'OR';
   const inp = $('minAgree');
   inp.max = Math.max(on, 1);
   if (+inp.value > on) inp.value = Math.max(on, 1);
+  // min_agree and the strict toggle only mean anything in AND mode
+  inp.disabled = orMode;
+  $('strictDir').disabled = orMode;
+  $('rowMinAgree').classList.toggle('off', orMode);
+  $('rowStrict').classList.toggle('off', orMode);
+
   $('quickCount').textContent = `${on} of ${boxes.length} enabled`;
   const n = +inp.value || 1;
-  $('quickHint').textContent = on === 0
-    ? 'Enable at least one strategy to get signals.'
-    : `An entry fires when ${n} of the ${on} enabled ${n === 1 ? 'strategy signals' : 'strategies agree'} on the same candle.`;
+  if (on === 0) {
+    $('quickHint').textContent = 'Enable at least one strategy to get signals.';
+  } else if (orMode) {
+    $('quickHint').textContent =
+      `OR: an entry fires when ANY of the ${on} enabled strategies signals. ` +
+      'Candles with both long and short votes are discarded.';
+  } else {
+    $('quickHint').textContent =
+      `AND: an entry fires when ${n} of the ${on} enabled ` +
+      `${n === 1 ? 'strategy signals' : 'strategies agree'} on the same candle.`;
+  }
 }
 
 function readQuickParams() {
   const out = {
+    agreement_mode: $('agreeMode').value,
     min_agree: parseInt($('minAgree').value, 10) || 1,
     strict_same_direction: $('strictDir').checked,
   };
@@ -368,6 +385,7 @@ async function init() {
   $('tabQuick').onclick = () => setTab('quick');
   $('tabConfig').onclick = () => setTab('config');
   $('minAgree').oninput = syncQuickState;
+  $('agreeMode').onchange = syncQuickState;
   sel.onchange = () => buildForm(CATALOG[sel.value]);
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
   $('mode').onchange = applyModeUI;

@@ -4,15 +4,17 @@ confirm each other before an entry counts.
 Idea
 ----
 Each sub-strategy is run independently over the same candles with the preset you
-pick for it. Their signals are then tallied **per candle**: if at least
-`min_agree` of the enabled strategies fire on the SAME bar in the SAME direction,
-this strategy emits that signal. Set `min_agree` to 1 and it behaves as a simple
-union (any strategy's signal passes through); raise it and entries get rarer but
-carry more confirmation.
+pick for it. Their signals are then tallied **per candle**, and the Agreement
+Mode decides what counts as a valid entry:
 
-`strict_same_direction` decides what happens when a bar has votes on BOTH sides.
-When on (the default), that bar is discarded as a genuine disagreement. When off,
-the heavier side wins and the opposing votes are ignored.
+  * **AND** — at least `min_agree` of the enabled strategies must fire on the
+    SAME bar in the SAME direction. Raise the threshold and entries get rarer
+    but carry more confirmation. `strict_same_direction` decides what happens
+    when a bar has votes on BOTH sides: on (the default) discards the bar as a
+    genuine disagreement; off lets the heavier side win.
+  * **OR** — any single enabled strategy's signal is enough. A bar with votes on
+    both sides is always discarded as a genuine disagreement, so `min_agree` and
+    `strict_same_direction` do not apply.
 
 Everything downstream is unchanged: the emitted signals feed the usual TP/SL
 engine, or the Polymarket next-candle mode, exactly like a single strategy's.
@@ -62,14 +64,22 @@ class Combined(Strategy):
     def param_groups(self) -> List[ParamGroup]:
         subs = _available()
         agreement = [
+            Param("agreement_mode", "Agreement Mode", "AND", "enum",
+                  options=["AND", "OR"],
+                  help="AND: at least 'Min Strategies In Agreement' of the "
+                       "enabled strategies must fire on the same candle in the "
+                       "same direction. OR: any single enabled strategy's signal "
+                       "is enough — but a candle with both long and short votes "
+                       "is still discarded as a genuine disagreement."),
             Param("min_agree", "Min Strategies In Agreement", 1, "int", 1,
                   max(len(subs), 1), 1,
-                  "How many enabled strategies must fire on the SAME candle in "
-                  "the same direction for the entry to count. 1 = any single "
-                  "strategy is enough."),
+                  "AND mode only. How many enabled strategies must fire on the "
+                  "SAME candle in the same direction for the entry to count. "
+                  "Ignored in OR mode."),
             Param("strict_same_direction", "Strict same-direction only", True, "bool",
-                  help="When a candle has both long and short votes: ON discards "
-                       "the bar as a disagreement; OFF lets the heavier side win."),
+                  help="AND mode only. When a candle has both long and short "
+                       "votes: ON discards the bar as a disagreement; OFF lets "
+                       "the heavier side win. OR mode always discards them."),
         ]
         picks = []
         for sid, S in subs:
@@ -86,24 +96,30 @@ class Combined(Strategy):
         subs = [sid for sid, _ in _available()]
         only = lambda keep: {f"use_{s}": (s in keep) for s in subs}
         return {
-            # Any single signal passes through — the widest net.
-            "Any signal (1 of N)": {"min_agree": 1, "strict_same_direction": True,
-                                    **only(subs)},
+            # OR: any single signal passes through — the widest net.
+            "Any signal (OR)": {"agreement_mode": "OR", **only(subs)},
             # Two independent confirmations.
-            "Confirmed (2 agree)": {"min_agree": 2, "strict_same_direction": True,
-                                    **only(subs)},
+            "Confirmed (2 agree)": {"agreement_mode": "AND", "min_agree": 2,
+                                    "strict_same_direction": True, **only(subs)},
             # High conviction.
-            "High conviction (3 agree)": {"min_agree": 3, "strict_same_direction": True,
-                                          **only(subs)},
+            "High conviction (3 agree)": {"agreement_mode": "AND", "min_agree": 3,
+                                          "strict_same_direction": True, **only(subs)},
             # The three mean-reversion strategies validated in this repo, 2 of 3.
-            "Validated trio (2 of 3)": {"min_agree": 2, "strict_same_direction": True,
+            "Validated trio (2 of 3)": {"agreement_mode": "AND", "min_agree": 2,
+                                        "strict_same_direction": True,
                                         **only({"rsi_bb", "stoch_wick", "atr_devexh"})},
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:
         p = self.resolve_params(params)
-        min_agree = max(1, int(p["min_agree"]))
-        strict = bool(p["strict_same_direction"])
+        or_mode = str(p["agreement_mode"]).upper() == "OR"
+        if or_mode:
+            # OR: any single enabled strategy is enough, but a bar with votes on
+            # both sides is always thrown away as a genuine disagreement.
+            min_agree, strict = 1, True
+        else:
+            min_agree = max(1, int(p["min_agree"]))
+            strict = bool(p["strict_same_direction"])
 
         # bar index -> side -> list of (strategy name, Signal)
         votes: dict = {}

@@ -124,3 +124,6 @@ td.win { color: var(--green); } td.loss { color: var(--red); }
 .srow select { width: 132px; padding: 4px 6px; font-size: 11px; cursor: pointer; }
 .srow.off label { color: var(--muted); }
 .srow.off select { opacity: .45; }
+/* AND-only controls dim out in OR mode */
+.pgroup .prow.off label { color: var(--muted); }
+.pgroup .prow.off input { opacity: .45; }

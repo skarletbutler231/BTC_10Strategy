@@ -49,11 +49,18 @@
         <div class="pgroup">
           <h4>00 — Quick Setup</h4>
           <div class="prow">
-            <label for="minAgree" title="How many enabled strategies must fire on the SAME candle in the same direction. 1 = any single strategy is enough.">Min Strategies In Agreement</label>
+            <label for="agreeMode" title="AND: at least N enabled strategies must agree on the same candle. OR: any single enabled strategy is enough (conflicting candles are still discarded).">Agreement Mode</label>
+            <select id="agreeMode">
+              <option value="AND" selected>AND</option>
+              <option value="OR">OR</option>
+            </select>
+          </div>
+          <div class="prow" id="rowMinAgree">
+            <label for="minAgree" title="AND mode only. How many enabled strategies must fire on the SAME candle in the same direction.">Min Strategies In Agreement</label>
             <input id="minAgree" type="number" min="1" max="10" step="1" value="1" />
           </div>
-          <div class="prow">
-            <label for="strictDir" title="When a candle has both long and short votes: ON discards the bar as a disagreement; OFF lets the heavier side win.">Strict same-direction only</label>
+          <div class="prow" id="rowStrict">
+            <label for="strictDir" title="AND mode only. When a candle has both long and short votes: ON discards the bar as a disagreement; OFF lets the heavier side win. OR mode always discards them.">Strict same-direction only</label>
             <input id="strictDir" type="checkbox" checked />
           </div>
         </div>
