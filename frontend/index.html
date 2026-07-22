@@ -39,16 +39,44 @@
 
   <main class="layout">
     <aside class="sidebar">
-      <div class="field">
-        <label class="block">Strategy</label>
-        <select id="strategy"></select>
-        <p id="stratDesc" class="muted small"></p>
+      <div class="tabs" role="tablist">
+        <button id="tabQuick" class="tab active" role="tab" aria-selected="true">Quick Setup</button>
+        <button id="tabConfig" class="tab" role="tab" aria-selected="false">Strategy Config</button>
       </div>
-      <div class="field">
-        <label class="block">Preset</label>
-        <select id="preset"></select>
+
+      <!-- ---------- Quick Setup: strategy-agreement entry gate ---------- -->
+      <div id="panelQuick" class="panel" role="tabpanel">
+        <div class="pgroup">
+          <h4>00 — Quick Setup</h4>
+          <div class="prow">
+            <label for="minAgree" title="How many enabled strategies must fire on the SAME candle in the same direction. 1 = any single strategy is enough.">Min Strategies In Agreement</label>
+            <input id="minAgree" type="number" min="1" max="10" step="1" value="1" />
+          </div>
+          <div class="prow">
+            <label for="strictDir" title="When a candle has both long and short votes: ON discards the bar as a disagreement; OFF lets the heavier side win.">Strict same-direction only</label>
+            <input id="strictDir" type="checkbox" checked />
+          </div>
+        </div>
+        <div class="pgroup">
+          <h4>Active strategies <span id="quickCount" class="muted small"></span></h4>
+          <div id="quickList"></div>
+        </div>
+        <p id="quickHint" class="muted small"></p>
       </div>
-      <div id="params"></div>
+
+      <!-- ---------- Strategy Config: one strategy, full parameters ------ -->
+      <div id="panelConfig" class="panel" role="tabpanel" hidden>
+        <div class="field">
+          <label class="block">Strategy</label>
+          <select id="strategy"></select>
+          <p id="stratDesc" class="muted small"></p>
+        </div>
+        <div class="field">
+          <label class="block">Preset</label>
+          <select id="preset"></select>
+        </div>
+        <div id="params"></div>
+      </div>
     </aside>
 
     <section class="content">

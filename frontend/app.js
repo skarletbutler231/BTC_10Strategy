@@ -109,6 +109,84 @@ function readParams() {
   return out;
 }
 
+/* ---------- Quick Setup (strategy agreement) ---------- */
+const COMBINED_ID = 'combined';
+const DEFAULT_PRESET = '— defaults —';
+let ACTIVE_TAB = 'quick';
+
+/** One row per sub-strategy: [x] Name [preset]. Driven by the combined
+ *  strategy's own schema so the two can never drift apart. */
+function buildQuickSetup(schema) {
+  const box = $('quickList');
+  box.innerHTML = '';
+  const byKey = {};
+  for (const g of schema.param_groups) for (const p of g.params) byKey[p.key] = p;
+
+  for (const p of Object.values(byKey)) {
+    if (!p.key.startsWith('use_')) continue;
+    const sid = p.key.slice(4);
+    const presetParam = byKey[`preset_${sid}`];
+    if (!presetParam) continue;
+
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const opts = (presetParam.options || [])
+      .map((o) => `<option value="${o}" ${o === presetParam.default ? 'selected' : ''}>${o}</option>`)
+      .join('');
+    row.innerHTML = `
+      <input type="checkbox" id="use-${sid}" data-use="${sid}" ${p.default ? 'checked' : ''} />
+      <label for="use-${sid}">${p.label}</label>
+      <select data-preset="${sid}" aria-label="${p.label} preset">${opts}</select>`;
+    box.appendChild(row);
+  }
+  box.querySelectorAll('[data-use]').forEach((cb) => {
+    cb.onchange = syncQuickState;
+  });
+  const mx = byKey.min_agree;
+  if (mx && mx.max != null) $('minAgree').max = mx.max;
+  syncQuickState();
+}
+
+/** Keep the "N of M" hint honest and clamp min_agree to what's enabled. */
+function syncQuickState() {
+  const boxes = [...document.querySelectorAll('#quickList [data-use]')];
+  const on = boxes.filter((b) => b.checked).length;
+  boxes.forEach((b) => b.closest('.srow').classList.toggle('off', !b.checked));
+  const inp = $('minAgree');
+  inp.max = Math.max(on, 1);
+  if (+inp.value > on) inp.value = Math.max(on, 1);
+  $('quickCount').textContent = `${on} of ${boxes.length} enabled`;
+  const n = +inp.value || 1;
+  $('quickHint').textContent = on === 0
+    ? 'Enable at least one strategy to get signals.'
+    : `An entry fires when ${n} of the ${on} enabled ${n === 1 ? 'strategy signals' : 'strategies agree'} on the same candle.`;
+}
+
+function readQuickParams() {
+  const out = {
+    min_agree: parseInt($('minAgree').value, 10) || 1,
+    strict_same_direction: $('strictDir').checked,
+  };
+  for (const cb of document.querySelectorAll('#quickList [data-use]')) {
+    out[`use_${cb.dataset.use}`] = cb.checked;
+  }
+  for (const sel of document.querySelectorAll('#quickList [data-preset]')) {
+    out[`preset_${sel.dataset.preset}`] = sel.value;
+  }
+  return out;
+}
+
+function setTab(name) {
+  ACTIVE_TAB = name;
+  const quick = name === 'quick';
+  $('panelQuick').hidden = !quick;
+  $('panelConfig').hidden = quick;
+  $('tabQuick').classList.toggle('active', quick);
+  $('tabConfig').classList.toggle('active', !quick);
+  $('tabQuick').setAttribute('aria-selected', String(quick));
+  $('tabConfig').setAttribute('aria-selected', String(!quick));
+}
+
 /* ---------- rendering results ---------- */
 function fmtTime(t) {
   const d = new Date(t * 1000);
@@ -213,10 +291,12 @@ async function runBacktest() {
   const entry_price = parseFloat($('odds').value) || 0.5;
   setBusy(mode === 'polymarket' ? 'Simulating Polymarket up/down bets…' : 'Fetching candles & simulating…');
   try {
+    // Quick Setup runs the agreement meta-strategy; Strategy Config runs one.
+    const quick = ACTIVE_TAB === 'quick';
     const body = {
-      strategy_id: $('strategy').value,
+      strategy_id: quick ? COMBINED_ID : $('strategy').value,
       symbol: p.symbol, interval: p.interval, start: p.start, end: p.end,
-      params: readParams(), mode, entry_price,
+      params: quick ? readQuickParams() : readParams(), mode, entry_price,
     };
     const data = await api('/api/backtest', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -266,13 +346,28 @@ async function init() {
   const sel = $('strategy');
   for (const s of strategies) {
     CATALOG[s.id] = s;
+    // the meta-strategy is driven by Quick Setup, not the single-strategy list
+    if (s.id === COMBINED_ID) continue;
     const o = document.createElement('option');
     o.value = s.id; o.textContent = s.name;
     sel.appendChild(o);
   }
-  const first = strategies[0];
+  const first = strategies.find((s) => s.id !== COMBINED_ID) || strategies[0];
   buildForm(first);
 
+  const combined = CATALOG[COMBINED_ID];
+  if (combined) {
+    buildQuickSetup(combined);
+    setTab('quick');
+  } else {
+    // backend without the meta-strategy: fall back to single-strategy only
+    $('tabQuick').hidden = true;
+    setTab('config');
+  }
+
+  $('tabQuick').onclick = () => setTab('quick');
+  $('tabConfig').onclick = () => setTab('config');
+  $('minAgree').oninput = syncQuickState;
   sel.onchange = () => buildForm(CATALOG[sel.value]);
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
   $('mode').onchange = applyModeUI;
