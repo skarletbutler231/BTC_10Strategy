@@ -129,29 +129,93 @@ Defaults of 12/48/144 bars are 1h/4h/12h on the 5m interval.
 | **Horizons** | `h_fast`, `h_mid`, `h_slow` (bars) |
 | **Signal** | `z_threshold`, `min_agree` (how many horizons must be stretched the same way), `require_fast` |
 | **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Entry Timing** | `require_opposing_bar` ☑, `opposing_bar_min_atr` |
 | **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
 | **Decision** | `predict_direction` (Reversion ⋁ Continuation) |
 
 Any horizon stretched the *opposite* way vetoes the bar — that is a conflict, not
 a signal.
 
+### Entry timing: don't fade a turn that already happened
+
+The stretch says *what* to bet; it says nothing about *when*. `require_opposing_bar`
+asks the second question: the signal bar must close **against** the bet — for a
+reversion SHORT, the bar must still be pushing up. If the bar has already turned
+your way, the reversal started without you. Those entries are a coin flip:
+
+| Preset | Kept | Kept hit | Dropped | Dropped hit | z |
+|--------|-----:|---------:|--------:|------------:|--:|
+| PM 5m Volume | 44,971 | 57.63% | 53,947 | 53.69% | +12.42 |
+| PM 5m Balanced | 38,497 | 57.78% | 1,845 | 51.22% | +5.56 |
+| PM 5m Selective | 20,635 | 57.82% | 1,071 | 50.42% | +4.78 |
+| PM 5m Hi Hit | 7,825 | 59.41% | 490 | 52.24% | +3.13 |
+| PM 5m Max Hit | 3,511 | 61.63% | 287 | 50.52% | +3.71 |
+
+All five presets enable it. `opposing_bar_min_atr` tightens it further by
+demanding a real body on that bar. Bolted onto presets chosen without it, that
+knob did nothing — so it stays 0 in four of them. But once the parameters were
+re-swept with the filter *inside* the loop, 21 of the 25 best configs asked for
+an opposing body of 0.50-0.75×ATR, and *Volume* now uses 0.75.
+
+### Why *not* to skip windows after a loss
+
+Consecutive losing windows are conspicuous, and runs of them really are longer
+than chance (loss-runs of ≥3 come out z=+2.3 to +20 above a within-run shuffle).
+Skipping a window whose neighbouring predecessor pointed the same way and lost is
+the obvious response. It was measured, and it makes things worse.
+
+A run of neighbouring signals exists *because* the bet kept losing — a win
+resolves the stretch, so the next bar stops firing. The win is what **ends** the
+run, so runs are shaped `loss, loss, …, win`:
+
+| Preset | Runs (≥2) | First window | Middle | Last window |
+|---|---:|---:|---:|---:|
+| PM 5m Volume | 17,935 | 20.55% | 38.42% | **94.18%** |
+| PM 5m Balanced | 9,428 | 11.00% | 13.37% | **84.09%** |
+| PM 5m Selective | 5,077 | 11.33% | 13.87% | **83.38%** |
+| PM 5m Hi Hit | 1,394 | 14.56% | 26.33% | **75.11%** |
+| PM 5m Max Hit | 706 | 15.44% | 31.09% | **75.50%** |
+
+Skipping after a loss keeps the first window of each run and throws away the rest
+— including the terminal winner. It removes the group hitting 57-62% and keeps
+the group hitting 50-53%. Across 60 configurations (5 presets × 2 readings of
+"previous prediction" × 1-3 bar neighbourhoods × this filter on/off) hit rate
+falls in 58, by ~1.1pp on *Volume* and 0.3-0.4pp elsewhere, at a cost of 20-35%
+of the bets.
+
+Those run positions aren't tradeable — you only know a window was last in its run
+after it wins. The predecessor's *outcome* is tradeable, and it says the opposite
+of the intuition: a loss means the stretch grew, so the next bet is stronger.
+`require_opposing_bar` is that same fact in per-bar form.
+
 ### Polymarket presets
 
-Swept over the whole DB (936,841 5m bars, ~94k combinations), same admission
-rules as the others:
+Swept over the whole DB (936,829 5m bars), same admission rules as the others.
+*Volume* comes from a 672k-combination re-sweep that had `require_opposing_bar`
+inside the loop and selected on **2017-2023 only**, so its 2024-26 column is
+out-of-sample. The other four keep their original parameters:
 
 | Preset | Bets | Hit | 2024-26 bets | 2024-26 hit | Worst yr | z |
 |--------|-----:|----:|-------------:|------------:|---------:|--:|
-| **PM 5m Volume** | 55,277 | 55.12% | 16,865 | 53.12% | 50.30% | 24.1 |
-| **PM 5m Balanced** | 40,342 | 57.48% | 10,805 | **56.25%** | 50.36% | **30.0** |
-| **PM 5m Selective** | 21,706 | 57.45% | 3,105 | 57.65% | 50.66% | 22.0 |
-| **PM 5m Hi Hit** | 8,315 | 58.99% | 2,027 | 58.26% | 53.95% | 16.4 |
-| **PM 5m Max Hit** | 3,798 | 60.80% | 582 | 61.00% | **55.24%** | 13.3 |
+| **PM 5m Volume** | 44,971 | 57.63% | 13,586 | 55.64% | 50.19% | **32.4** |
+| **PM 5m Balanced** | 38,497 | 57.78% | 10,420 | **56.31%** | 50.49% | **30.5** |
+| **PM 5m Selective** | 20,635 | 57.82% | 3,002 | 57.76% | 50.81% | 22.5 |
+| **PM 5m Hi Hit** | 7,825 | 59.41% | 1,939 | 58.48% | 54.42% | 16.6 |
+| **PM 5m Max Hit** | 3,511 | 61.63% | 552 | 61.41% | **55.56%** | 13.8 |
 
-**This is the strongest strategy in the repo.** *Balanced* holds 56.25% across
-10,805 recent bets at z=30.0, and — unlike the other strategies' high-hit
-presets — *Hi Hit* and *Max Hit* rest on real samples: every year from 2017 to
-2026 lands between 53.9% and 63.2%, so neither leans on one lucky regime.
+**This is the strongest strategy in the repo.** *Volume* now carries both the
+most bets and the highest z (32.4) at 55.64% over 2024-26 — and that number is
+out-of-sample. *Balanced* holds 56.31% across 10,420 recent bets, and — unlike
+the other strategies' high-hit presets — *Hi Hit* and *Max Hit* rest on real
+samples: every year from 2017 to 2026 lands between 54.4% and 63.9%.
+
+Two caveats on the re-sweep. Train hit rate is informative but optimistic: the
+top 50 configs by 2017-2023 hit average 63.2% there and 60.8% on 2024-26, so
+budget ~3pp of shrinkage on any in-sample figure. And four of the five presets
+were already at the out-of-sample frontier — nothing beat *Balanced*, *Selective*,
+*Hi Hit* or *Max Hit* at equal bet count (−0.3 to −2.7pp), so only *Volume*
+changed. Their 2024-26 numbers remain in-sample and aren't on equal footing with
+*Volume*'s.
 
 Three findings came out of the sweep:
 
