@@ -114,6 +114,13 @@ const COMBINED_ID = 'combined';
 const DEFAULT_PRESET = '— defaults —';
 let ACTIVE_TAB = 'quick';
 
+// Canonical presets offered by the bulk "set all" dropdown, in display order.
+// Only the ones every enabled sub-strategy actually has are shown.
+const BULK_PRESETS = [
+  'PM 5m Volume', 'PM 5m Balanced', 'PM 5m Hi Hit',
+  'PM 5m Wknd Volume', 'PM 5m Wknd Balanced', 'PM 5m Wknd Hi Hit',
+];
+
 /** One row per sub-strategy: [x] Name [preset]. Driven by the combined
  *  strategy's own schema so the two can never drift apart. */
 function buildQuickSetup(schema) {
@@ -144,6 +151,28 @@ function buildQuickSetup(schema) {
   });
   const mx = byKey.min_agree;
   if (mx && mx.max != null) $('minAgree').max = mx.max;
+
+  // Bulk dropdown: offer only presets present in EVERY sub-strategy, so
+  // "set all" can never leave a strategy on a preset it doesn't have.
+  const optionSets = Object.keys(byKey)
+    .filter((k) => k.startsWith('preset_'))
+    .map((k) => new Set(byKey[k].options || []));
+  const common = BULK_PRESETS.filter((name) => optionSets.every((s) => s.has(name)));
+  const bulk = $('bulkPreset');
+  bulk.innerHTML = '<option value="">— choose —</option>'
+    + common.map((n) => `<option value="${n}">${n}</option>`).join('');
+  $('rowBulk').style.display = common.length ? '' : 'none';
+
+  syncQuickState();
+}
+
+/** Set every strategy's preset dropdown to `name` (only where that option
+ *  exists), then refresh the hint. Leaves the enable checkboxes untouched. */
+function setAllPresets(name) {
+  if (!name) return;
+  for (const sel of document.querySelectorAll('#quickList [data-preset]')) {
+    if ([...sel.options].some((o) => o.value === name)) sel.value = name;
+  }
   syncQuickState();
 }
 
@@ -386,6 +415,7 @@ async function init() {
   $('tabConfig').onclick = () => setTab('config');
   $('minAgree').oninput = syncQuickState;
   $('agreeMode').onchange = syncQuickState;
+  $('bulkPreset').onchange = (e) => setAllPresets(e.target.value);
   sel.onchange = () => buildForm(CATALOG[sel.value]);
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
   $('mode').onchange = applyModeUI;
