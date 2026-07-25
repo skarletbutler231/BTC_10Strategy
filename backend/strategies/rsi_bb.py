@@ -153,118 +153,7 @@ class RsiBb(Strategy):
         ]
 
     def presets(self) -> dict:
-        # Tuned on 5 regime-diverse years of 5m BTC (2021-2025). Two findings
-        # drive every preset:
-        #   * The WITH-TREND gate is essential: with the trend filter off the raw
-        #     RSI+BB fade has NEGATIVE gross expectancy (it loses even at zero
-        #     fees), so the trend filter is ON in all presets.
-        #   * The edge is many small trend-gated mean-reversions -> gross return
-        #     rises with trade frequency, but so does fee drag. The presets are a
-        #     frequency <-> fee-sensitivity spectrum, not a random/curve-fit set.
-        # Numbers below are the 2021-2025 sum of yearly returns (5m BTC).
         return {
-            # More, quicker fades. Strongest GROSS edge (~+50% over 2021-2025,
-            # positive every year) but only at low cost -> best where fees are
-            # tiny (maker/VIP) or for judging raw signal quality. Heavy fee drag
-            # at taker rates.
-            "High-Frequency": {
-                "direction": "Both",
-                "rsi_overbought": 65, "rsi_oversold": 35,
-                "bb_mult": 1.9, "pctb_upper": 0.85, "pctb_lower": 0.15,
-                "min_wick_ratio": 0.10, "min_close_recovery": 0.25,
-                "use_bias_filter": False,
-                "use_trend_filter": True, "trend_logic": "With Trend",
-                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
-                "atr_pct_min": 0.05, "atr_pct_max": 1.8,
-                "tp_atr_mult": 1.2, "sl_atr_mult": 1.6, "max_hold_bars": 10,
-                "fee_bps": 5,
-            },
-            # Recommended all-rounder (matches the param defaults). Moderate
-            # frequency; solid gross edge (~+15%, 4/5 years) with less fee drag
-            # than High-Frequency.
-            "Balanced": {
-                "direction": "Both",
-                "rsi_overbought": 68, "rsi_oversold": 32,
-                "bb_mult": 2.0, "pctb_upper": 0.90, "pctb_lower": 0.10,
-                "min_wick_ratio": 0.15, "min_close_recovery": 0.30,
-                "use_bias_filter": False,
-                "use_trend_filter": True, "trend_logic": "With Trend",
-                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
-                "atr_pct_min": 0.05, "atr_pct_max": 1.6,
-                "tp_atr_mult": 1.5, "sl_atr_mult": 1.5, "max_hold_bars": 12,
-                "fee_bps": 5,
-            },
-            # Long-only dip buyer for spot accounts that can't/won't short: buys
-            # oversold pullbacks in an uptrend only. Fewer trades and lower
-            # variance, but note the two-sided presets net more gross here --
-            # this is a directional-preference option, not a performance play.
-            "Long-Only Dips": {
-                "direction": "Long Only",
-                "rsi_overbought": 68, "rsi_oversold": 33,
-                "bb_mult": 2.0, "pctb_upper": 0.90, "pctb_lower": 0.10,
-                "min_wick_ratio": 0.15, "min_close_recovery": 0.30,
-                "use_bias_filter": False,
-                "use_trend_filter": True, "trend_logic": "With Trend",
-                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
-                "atr_pct_min": 0.05, "atr_pct_max": 1.8,
-                "tp_atr_mult": 1.5, "sl_atr_mult": 1.5, "max_hold_bars": 12,
-                "fee_bps": 5,
-            },
-            # Fewest, highest-conviction fades: stricter RSI/%B, tight vol ceiling
-            # and wider symmetric targets. Lowest gross edge but the least
-            # fee-sensitive and smallest drawdowns -> the closest to break-even
-            # once realistic taker fees are applied.
-            "Selective": {
-                "direction": "Both",
-                "rsi_overbought": 70, "rsi_oversold": 30,
-                "bb_mult": 2.0, "pctb_upper": 0.95, "pctb_lower": 0.05,
-                "min_wick_ratio": 0.20, "min_close_recovery": 0.35,
-                "use_bias_filter": False,
-                "use_trend_filter": True, "trend_logic": "With Trend",
-                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
-                "atr_pct_min": 0.05, "atr_pct_max": 1.2,
-                "tp_atr_mult": 1.5, "sl_atr_mult": 1.5, "max_hold_bars": 12,
-                "fee_bps": 5,
-            },
-
-            # --- Polymarket 5-minute UP/DOWN mode -----------------------------
-            # Run these with Mode = "Polymarket up/down" (interval 5m). Each
-            # signal is an independent bet that the NEXT 5m candle closes in the
-            # faded direction (long = UP, short = DOWN); TP/SL/fee are ignored.
-            # Two things flip vs the TP/SL presets: the trend gate is best set to
-            # AGAINST TREND (contrarian fading of stretches away from the MA
-            # predicts the next candle far better than with-trend), and the candle
-            # needs only a recovery close (min_close_recovery 0.3), no wick.
-            # Tuned on 6 months of 5m BTC and validated on 7 disjoint months
-            # (13 months / ~680-850 bets total). Base rate of an up-candle is
-            # ~50%, so the hit rates below are a real directional edge. Note the
-            # single-side and ultra-selective variants did NOT survive the
-            # holdout, so only these two robust two-sided presets are shipped.
-
-            # ~58.9% hit over 13 months (12/13 months >50%), ~53 bets/mo.
-            # EV-positive buying shares at any price up to ~0.58. The flagship.
-            "Polymarket 5m (Reversion)": {
-                "direction": "Both",
-                "rsi_oversold": 35, "rsi_overbought": 65,
-                "bb_mult": 2.5, "pctb_upper": 1.0, "pctb_lower": 0.0,
-                "min_wick_ratio": 0.0, "min_close_recovery": 0.30,
-                "use_bias_filter": False,
-                "use_trend_filter": True, "trend_logic": "Against Trend",
-                "ma_type": "EMA", "ma_length": 200, "ma_source": "close",
-                "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-            },
-            # ~57.2% hit over 13 months (11/13 >50%), ~66 bets/mo -> more action
-            # for a slightly lower hit. Fades one %B step BEYOND the bands with no
-            # trend filter and a small ATR% floor. EV-positive up to ~0.57.
-            "Polymarket 5m (More Bets)": {
-                "direction": "Both",
-                "rsi_oversold": 35, "rsi_overbought": 65,
-                "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
-                "min_wick_ratio": 0.0, "min_close_recovery": 0.30,
-                "use_bias_filter": False,
-                "use_trend_filter": False,
-                "atr_pct_min": 0.08, "atr_pct_max": 5.0,
-            },
             # --- Polymarket 5m, day-aware sweep (2026) ------------------------
             # A 15,552-combination sweep over the WHOLE DB (936,829 5m bars,
             # 2017-08 .. 2026-07), scored in Polymarket up/down mode. Two families
@@ -396,22 +285,29 @@ class RsiBb(Strategy):
                 "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
                 **_WEEKEND,
             },
-
-            # 15m markets (Mode = "Polymarket up/down", interval 15m). Real edge
-            # but CHOPPIER than 5m: ~57.3% hit over 13 months yet only 8/13 were
-            # winning months (worst ~35%), so size stakes conservatively. ~38
-            # bets/mo, less-extreme RSI (40/60) since 15m candles reach extremes
-            # less often. EV-positive up to ~0.57. (1m was analysed and rejected:
-            # weaker ~54% edge, a 47.9% base up-rate that flags a microstructure
-            # artifact rather than real edge, and no 1m market on Polymarket.)
-            "Polymarket 15m (Reversion)": {
+            # --- Re-optimized for VOLUME, 2yr training window ----------------
+            # Coarse grid search (direction x rsi_oversold x rsi_overbought x
+            # bb_mult; 360 combos) over the trailing 2 years only (2024-07-19 ->
+            # 2026-07-19), anchored on this file's "PM 5m Volume" preset's
+            # structural choices (no day gate, no trend/bias filter, wide ATR
+            # band). Objective: most bets subject to hit rate >= 52% overall AND
+            # >= 50% in BOTH halves of the 2yr window (so volume can't come at
+            # the cost of the edge vanishing). Result: 89,355 bets, 52.40% hit
+            # (52.4% / 52.4% by half), vs. the full-history "PM 5m Volume"
+            # preset's own trailing-2yr numbers of 4,871 bets at 56.58% hit --
+            # 18x the bet count for a thinner but still real per-bet edge.
+            # CAVEAT: this preset fires on ~42% of all 5-minute bars in the
+            # window -- adjacent bets are not independent trials, so treat the
+            # hit-rate floor as a rough guide, not a rigorous significance test.
+            # Re-run this search periodically rather than trusting it indefinitely.
+            "PM 5m Volume - 2yr Train": {
                 "direction": "Both",
-                "rsi_oversold": 40, "rsi_overbought": 60,
-                "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
-                "min_wick_ratio": 0.0, "min_close_recovery": 0.30,
-                "use_bias_filter": False,
-                "use_trend_filter": False,
-                "atr_pct_min": 0.08, "atr_pct_max": 5.0,
+                "rsi_length": 7, "rsi_oversold": 45, "rsi_overbought": 55,
+                "bb_length": 20, "bb_mult": 1.0,
+                "pctb_upper": 1.1, "pctb_lower": -0.1,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False, "use_trend_filter": False,
+                "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
             },
         }
 

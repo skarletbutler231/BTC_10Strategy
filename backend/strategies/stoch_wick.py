@@ -136,24 +136,6 @@ class StochWick(Strategy):
         ]
 
     def presets(self) -> dict:
-        # --- Polymarket 5-minute UP/DOWN mode ---------------------------------
-        # Run with Mode = "Polymarket up/down", interval 5m. Each signal is an
-        # independent bet that the NEXT 5m candle closes in the predicted
-        # direction; TP/SL and fees are ignored.
-        #
-        # Tuned on 6 months and validated on 7 disjoint months, then measured
-        # across all 13 (2025-03 .. 2026-06). What the data says:
-        #   * REVERSION wins outright — fading the extreme beats following it.
-        #   * The deepest zone (90/10) is where the edge lives; 80/20 is too shallow.
-        #   * The WICK/RECOVERY filters HURT here, monotonically: turning them off
-        #     lifts hit rate from 52.4% -> 54.9% and months-positive from 7/13 ->
-        #     13/13. They shrink the sample without adding prediction, so all three
-        #     presets disable them. (They remain useful in TP/SL mode, where the
-        #     objective is a multi-bar move rather than one candle.)
-        #   * ADX earns its place only as a LOOSE ceiling (30) that removes the
-        #     strongest trends; a tight 20 cuts the sample and gets worse.
-        # A ~50% base rate of up-candles makes these hit rates real edge. All three
-        # were positive in 13/13 months. Breakeven odds ~= the hit rate.
         # --- Polymarket 5m, day-aware sweep -----------------------------------------
         # Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
         # families of three tiers: all-days and weekend-gated (Sat+Sun, UTC).
@@ -180,40 +162,6 @@ class StochWick(Strategy):
         # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
         # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
-            # Maximum action: no filters beyond the stochastic zone.
-            # 55.0% hit over 10,706 bets (~823/mo), worst month 52.3%, 13/13.
-            "Polymarket 5m (Max Volume)": {
-                "predict_direction": "Reversion",
-                "stoch_k_length": 14, "stoch_d_length": 3,
-                "overbought": 90, "oversold": 10,
-                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
-                "use_adx_filter": False, "adx_length": 14, "adx_max": 30,
-                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-                "use_trend_filter": False,
-            },
-            # Recommended. Same trigger, gated to non-trending tape by a loose ADX.
-            # 55.2% hit over 7,520 bets (~578/mo), worst month 52.3%, 13/13.
-            "Polymarket 5m (Balanced)": {
-                "predict_direction": "Reversion",
-                "stoch_k_length": 14, "stoch_d_length": 3,
-                "overbought": 90, "oversold": 10,
-                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
-                "use_adx_filter": True, "adx_length": 14, "adx_max": 30,
-                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-                "use_trend_filter": False,
-            },
-            # Highest hit rate that still keeps a large sample: adds back a token
-            # wick requirement only (recovery stays off).
-            # 55.5% hit over 3,714 bets (~286/mo), worst month 51.9%, 13/13.
-            "Polymarket 5m (Hi Hit)": {
-                "predict_direction": "Reversion",
-                "stoch_k_length": 14, "stoch_d_length": 3,
-                "overbought": 90, "oversold": 10,
-                "min_wick_ratio": 0.10, "min_close_recovery": 0.0,
-                "use_adx_filter": True, "adx_length": 14, "adx_max": 30,
-                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-                "use_trend_filter": False,
-            },
             # 22,492 bets, 58.26% hit; 2024-26 55.77%, worst year 51.47%.
             "PM 5m Volume": {
                 "stoch_k_length": 14, "stoch_d_length": 1, "overbought": 95,
@@ -276,6 +224,31 @@ class StochWick(Strategy):
                 "ma_type": 'EMA', "ma_length": 200,
                 "predict_direction": 'Reversion',
                 **_WEEKEND,
+            },
+            # --- Re-optimized for VOLUME, 2yr training window ----------------
+            # Coarse grid search (stoch_k_length x overbought x oversold x
+            # min_wick_ratio; 150 combos) over the trailing 2 years only
+            # (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m Volume"
+            # preset's structural choices (no ADX/trend filter, all days). Same
+            # admission rule as every other strategy's 2yr-Train preset in this
+            # repo: most bets subject to hit rate >= 52% overall AND >= 50% in
+            # BOTH halves of the window. Result: 105,777 bets, 52.23% hit (52.1%
+            # / 52.3% by half), vs. the full-history "PM 5m Volume" preset's own
+            # trailing-2yr numbers of 7,071 bets at 55.61% hit -- 15x the bet
+            # count for a thinner but still real edge.
+            # CAVEAT: this preset fires on ~50% of ALL 5-minute bars in the
+            # window -- essentially every other candle. Adjacent bets are not
+            # independent trials, so treat the hit-rate floor as a rough guide,
+            # not a rigorous significance test. Re-run this search periodically
+            # rather than trusting it indefinitely.
+            "PM 5m Volume - 2yr Train": {
+                "stoch_k_length": 14, "stoch_d_length": 1, "overbought": 75,
+                "oversold": 25, "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_adx_filter": False, "adx_length": 14, "adx_max": 30,
+                "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+                "use_trend_filter": False, "trend_logic": "With Trend",
+                "ma_type": "EMA", "ma_length": 200,
+                "predict_direction": "Reversion",
             },
         }
 

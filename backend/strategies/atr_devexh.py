@@ -125,25 +125,6 @@ class AtrDevExh(Strategy):
         ]
 
     def presets(self) -> dict:
-        # --- Polymarket 5-minute UP/DOWN mode ---------------------------------
-        # Run with Mode = "Polymarket up/down", interval 5m. Each signal is an
-        # independent bet that the NEXT 5m candle closes in the predicted
-        # direction; TP/SL and fees are ignored.
-        #
-        # Tuned on 6 months, validated on 7 disjoint months, then measured across
-        # all 13 (2025-03 .. 2026-06). What the data says:
-        #   * REVERSION wins outright — fading the Donchian extreme beats riding it.
-        #   * A LONG channel is where the edge lives: 55 bars beats 20 (more bets,
-        #     lower hit) and beats 80-150 (which fall to 8-11 profitable months).
-        #   * The VELOCITY gate does not earn its keep. Leaving it off ("Any") is
-        #     the most robust setting — 13/13 months at 54.3% versus 12/13 at 55.0%
-        #     for "Decelerating", which also halves the sample. The exhaustion
-        #     premise in the name simply is not what predicts the next candle; the
-        #     extreme itself is. Only the Hi Hit preset uses a velocity gate, and
-        #     the setting that wins there is Accelerating, not Decelerating.
-        #   * The trend filter only shrinks the sample (With Trend: 227 bets, 10/13).
-        # A ~50% base rate of up-candles makes these hit rates real edge. All three
-        # were positive in 13/13 months. Breakeven odds ~= the hit rate.
         # --- Polymarket 5m, day-aware sweep -----------------------------------------
         # Whole DB (936,829 5m bars, 2017-08 .. 2026-07), Polymarket up/down mode. Two
         # families of three tiers: all-days and weekend-gated (Sat+Sun, UTC). Admission:
@@ -166,39 +147,6 @@ class AtrDevExh(Strategy):
         # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
         # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
-            # Maximum action: fires the moment a new 55-bar extreme is confirmed.
-            # 53.9% hit over 6,521 bets (~502/mo), worst month 51.2%, 13/13.
-            "Polymarket 5m (Max Volume)": {
-                "predict_direction": "Reversion",
-                "velocity_mode": "Any", "velocity_lookback": 5,
-                "donchian_length": 55, "donchian_confirm": 2,
-                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-                "use_trend_filter": False,
-            },
-            # Recommended. One more bar of confirmation buys a better hit rate,
-            # and the velocity gate stays OFF — so it leans only on the lever that
-            # held up under isolation. Hi Hit edges it numerically, but does so via
-            # a velocity gate that was the less stable of the two in testing; prefer
-            # this one if you want the structurally safer bet.
-            # 54.3% hit over 3,123 bets (~240/mo), worst month 51.2%, 13/13.
-            "Polymarket 5m (Balanced)": {
-                "predict_direction": "Reversion",
-                "velocity_mode": "Any", "velocity_lookback": 5,
-                "donchian_length": 55, "donchian_confirm": 3,
-                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-                "use_trend_filter": False,
-            },
-            # Best hit rate that keeps a large sample: fade a two-bar extreme while
-            # velocity is still ACCELERATING into it (the strongest thrusts revert
-            # hardest over one candle).
-            # 54.7% hit over 3,369 bets (~259/mo), worst month 51.2%, 13/13.
-            "Polymarket 5m (Hi Hit)": {
-                "predict_direction": "Reversion",
-                "velocity_mode": "Accelerating", "velocity_lookback": 5,
-                "donchian_length": 55, "donchian_confirm": 2,
-                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
-                "use_trend_filter": False,
-            },
             # 6,269 bets, 54.19% hit; 2024-26 52.46%, worst year 50.26%.
             "PM 5m Volume": {
                 "velocity_lookback": 1, "velocity_mode": 'Accelerating',
@@ -254,6 +202,30 @@ class AtrDevExh(Strategy):
                 "trend_mode": 'Against Trend', "ma_type": 'EMA',
                 "ma_length": 200,
                 **_WEEKEND,
+            },
+            # --- Re-optimized for VOLUME, 2yr training window ----------------
+            # Coarse grid search (donchian_length x donchian_confirm x
+            # velocity_mode; 84 combos) over the trailing 2 years only
+            # (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m Volume"
+            # preset's structural choices. Same admission rule as every other
+            # strategy's 2yr-Train preset in this repo: most bets subject to hit
+            # rate >= 52% overall AND >= 50% in BOTH halves of the window.
+            # Notably, the full-history "PM 5m Volume" preset ITSELF does not
+            # clear that floor over the trailing 2 years (51.37% hit, 1,941
+            # bets) -- its edge has decayed recently. This re-fit preset beats
+            # it on both axes: 46,968 bets at 52.88% hit (53.1% / 52.7% by
+            # half) -- 24x the bet count with a slightly better hit rate.
+            # CAVEAT: this preset fires on ~22% of all 5-minute bars in the
+            # window. Adjacent bets are not fully independent trials, so treat
+            # the hit-rate floor as a rough guide, not a rigorous significance
+            # test. Re-run this search periodically rather than trusting it
+            # indefinitely.
+            "PM 5m Volume - 2yr Train": {
+                "velocity_lookback": 1, "velocity_mode": "Any",
+                "donchian_length": 10, "donchian_confirm": 1,
+                "vol_atr_length": 14, "atr_pct_min": 0.03, "atr_pct_max": 5.0,
+                "predict_direction": "Reversion", "use_trend_filter": True,
+                "trend_mode": "Against Trend", "ma_type": "EMA", "ma_length": 200,
             },
         }
 

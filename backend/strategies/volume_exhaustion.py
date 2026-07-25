@@ -377,4 +377,25 @@ PRESETS: dict = {
         "predict_direction": 'Reversion',
         **_WEEKEND,
     },
+    # --- Re-optimized for VOLUME, 2yr training window -------------------------
+    # Coarse grid search (vol_spike_mult x vol_rank_min x vol_ma_length; 108
+    # combos) over the trailing 2 years only (2024-07-19 -> 2026-07-19),
+    # anchored on this file's "PM 5m Volume" preset's structural choices
+    # (Against Trend, wide-ish ATR band). Same admission rule as every other
+    # strategy's 2yr-Train preset in this repo: most bets subject to hit rate
+    # >= 52% overall AND >= 50% in BOTH halves of the window. Result: 25,446
+    # bets, 53.27% hit (53.3% / 53.2% by half), vs. the full-history "PM 5m
+    # Volume" preset's own trailing-2yr numbers of 5,612 bets at 55.06% hit --
+    # 4.5x the bet count for a thinner but still real edge.
+    # CAVEAT: this preset fires on ~12% of all 5-minute bars in the window.
+    # Re-run this search periodically rather than trusting it indefinitely.
+    "PM 5m Volume - 2yr Train": {
+        "vol_ma_length": 50, "vol_spike_mult": 1.0,
+        "vol_rank_lookback": 200, "vol_rank_min": 70,
+        "min_body_ratio": 0.2, "wick_min": 0.0,
+        "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": True, "trend_logic": "Against Trend",
+        "ma_type": "SMA", "ma_length": 100, "source": "close",
+        "predict_direction": "Reversion",
+    },
 }

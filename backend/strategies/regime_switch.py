@@ -135,61 +135,6 @@ class RegimeSwitch(Strategy):
         # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
         # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
-            # Tuned for Polymarket 5-min UP/DOWN (Mode = "Polymarket up/down",
-            # interval 5m). Counter-intuitive but robust across Jul/Jun/May 2026
-            # (56.9% / 58.7% / 61.3%, ~230 bets/month): on 5m BTC a channel break
-            # during a HIGH-efficiency (trending) stretch snaps back rather than
-            # continuing, so the regime detector is used to *select* those bars
-            # and the break is faded. Exit params unused in that mode.
-            "Polymarket 5m (Reversion)": {
-                "regime_method": "Efficiency Ratio", "regime_length": 30,
-                "regime_threshold": 35,
-                "trade_trend_regime": True, "trade_range_regime": False,
-                "channel_length": 10, "breakout_buffer_atr": 0.0,
-                "min_body_ratio": 0.0, "regime_mapping": "Always Reversion",
-            },
-            # Same signal restricted to the strongest weekdays. Day-of-week study
-            # over the FULL history (20,316 bets, 2017-2026) -- Wed/Sat/Sun is the
-            # most STABLE set, and Monday is the weakest day:
-            #                     all | 2024-26 | 2025-26 | 2026   (worst / spread)
-            #   Wed+Sat+Sun    58.55% |  57.65% |  57.38% | 57.40%  (57.38 / 1.17)
-            #   Sat only       59.44% |  58.94% |  56.19% | 54.88%  (54.88 / 4.56)
-            #   all days       57.21% |  55.27% |  55.07% | 57.71%  (55.07 / 2.64)
-            # Note Sat-alone tops all-history but decays badly, so the wider,
-            # far steadier Wed+Sat+Sun set is used instead.
-            "Polymarket 5m (Best Days)": {
-                "regime_method": "Efficiency Ratio", "regime_length": 30,
-                "regime_threshold": 35,
-                "trade_trend_regime": True, "trade_range_regime": False,
-                "channel_length": 10, "breakout_buffer_atr": 0.0,
-                "min_body_ratio": 0.0, "regime_mapping": "Always Reversion",
-                "use_trading_window": True,
-                "trade_mon": False, "trade_tue": False, "trade_wed": True,
-                "trade_thu": False, "trade_fri": False, "trade_sat": True,
-                "trade_sun": True,
-                "start_hour": 0, "start_minute": 0, "end_hour": 23, "end_minute": 59,
-            },
-            "Adaptive (both regimes)": {
-                "regime_method": "ADX", "regime_length": 14, "regime_threshold": 25,
-                "trade_trend_regime": True, "trade_range_regime": True,
-                "channel_length": 20, "regime_mapping": _MAPPINGS[0],
-            },
-            "Range Only (fade)": {
-                "regime_method": "ADX", "regime_threshold": 25,
-                "trade_trend_regime": False, "trade_range_regime": True,
-                "channel_length": 20, "regime_mapping": _MAPPINGS[0],
-            },
-            "Trend Only (momentum)": {
-                "regime_method": "ADX", "regime_threshold": 25,
-                "trade_trend_regime": True, "trade_range_regime": False,
-                "channel_length": 20, "regime_mapping": _MAPPINGS[0],
-                "breakout_buffer_atr": 0.25, "min_body_ratio": 0.3,
-            },
-            "Efficiency Ratio": {
-                "regime_method": "Efficiency Ratio", "regime_length": 20,
-                "regime_threshold": 30, "channel_length": 20,
-                "trade_trend_regime": True, "trade_range_regime": True,
-            },
             # 18,914 bets, 58.01% hit; 2024-26 55.85%, worst year 50.40%.
             "PM 5m Volume": {
                 "regime_method": 'ADX', "regime_length": 14,
@@ -276,6 +221,34 @@ class RegimeSwitch(Strategy):
                 "ma_length": 200, "source": 'close', "trade_mon": False,
                 "trade_tue": False, "trade_wed": False, "trade_thu": False,
                 "trade_fri": False, "trade_sat": True, "trade_sun": True,
+            },
+            # --- Re-optimized for VOLUME, 2yr training window ----------------
+            # Coarse grid search (channel_length x breakout_buffer_atr x
+            # regime_threshold; 45 combos) over the trailing 2 years only
+            # (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m
+            # Volume" preset's structural choices (both regimes traded, Always
+            # Reversion mapping, with-trend filter). Same admission rule as
+            # every other strategy's 2yr-Train preset in this repo: most bets
+            # subject to hit rate >= 52% overall AND >= 50% in BOTH halves of
+            # the window. Result: 19,777 bets, 52.86% hit (52.5% / 53.2% by
+            # half), vs. the full-history "PM 5m Volume" preset's own
+            # trailing-2yr numbers of 5,496 bets at 55.91% hit -- 3.6x the bet
+            # count for a thinner but still real edge (the smallest volume
+            # multiple of the ten strategies here).
+            # CAVEAT: this preset fires on ~9% of all 5-minute bars in the
+            # window. Re-run this search periodically rather than trusting it
+            # indefinitely.
+            "PM 5m Volume - 2yr Train": {
+                "regime_method": "ADX", "regime_length": 14,
+                "regime_threshold": 15, "trade_trend_regime": True,
+                "trade_range_regime": True, "channel_length": 5,
+                "breakout_buffer_atr": 0.0, "min_body_ratio": 0.2,
+                "regime_mapping": "Always Reversion", "vol_atr_length": 50,
+                "vol_min_atr_pct": 0.0, "vol_max_atr_pct": 20.0,
+                "use_trading_window": False, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
+                "source": "close",
             },
         }
 
