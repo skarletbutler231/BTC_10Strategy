@@ -9,6 +9,7 @@ from ..registry import register
 from .atr_devexh import AtrDevExh
 from .bb_squeeze import BBSqueeze
 from .cci_williams import CCIWilliams
+from .combined import Combined
 from .jump_exhaustion import JumpExhaustion
 from .multi_horizon import MultiHorizon
 from .regime_switch import RegimeSwitch
@@ -28,6 +29,9 @@ register(VolumeExhaustion())
 register(JumpExhaustion())
 register(CCIWilliams())
 register(MultiHorizon())
+
+# Registered last: it reads the others' presets, so they must already exist.
+register(Combined())
 
 # --- The video's ten strategies — all implemented ----------------------------
 #   1. RSI + BB            (rsi_bb.py)             <-- DONE
