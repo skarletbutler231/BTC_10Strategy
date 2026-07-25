@@ -50,6 +50,50 @@ CREATE TABLE IF NOT EXISTS ingest_log (
     loaded_at INTEGER NOT NULL,   -- unix seconds
     PRIMARY KEY (symbol, interval, partition)
 );
+
+-- ============================================================================
+-- Polymarket BTC 5-minute UP/DOWN markets (for realistic Polymarket backtests).
+-- One row per 5-minute window; `start_ts` is the window open on the UTC 5m grid,
+-- so it joins directly to a BTC 5m candle's open time. Prices are the Chainlink
+-- settlement references (same feed as BTCUSD_CL). resolved_up: 1 up / 0 down.
+CREATE TABLE IF NOT EXISTS pm_window (
+    start_ts    INTEGER PRIMARY KEY,   -- window open, unix SECONDS (UTC, 5m grid)
+    market_id   TEXT,                  -- Polymarket market id
+    slug        TEXT,                  -- e.g. 'btc-updown-5m-<start_ts>'
+    end_ts      INTEGER,               -- window close = start_ts + 300
+    start_price REAL,                  -- Chainlink price at window open
+    end_price   REAL,                  -- Chainlink price at window close (== next window's start)
+    resolved_up INTEGER,               -- 1 up / 0 down / NULL if unresolved
+    resolved_src TEXT                  -- 'chainlink' (recorded outcome) | 'boundary' (next-window start)
+) WITHOUT ROWID;
+
+-- Tick-level YES(UP) share price for each window (the tradeable Polymarket odds).
+-- One row per (window, second); `yes` is the mid, with book top-of-book bid/ask.
+-- Backtests read this to price an entry realistically instead of assuming 0.5.
+CREATE TABLE IF NOT EXISTS pm_quote (
+    start_ts INTEGER NOT NULL,   -- window this tick belongs to (-> pm_window)
+    time     INTEGER NOT NULL,   -- tick time, unix SECONDS (UTC)
+    yes      REAL,               -- YES(UP) mid price in [0,1]
+    yes_bid  REAL,
+    yes_ask  REAL,
+    PRIMARY KEY (start_ts, time)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_pm_quote_time ON pm_quote(time);
+
+-- Resumable byte cursor for the append-only stream.jsonl ingester, plus the
+-- still-forming ('unsealed') trailing 1-minute candle held back between runs so
+-- an incomplete minute is never written as if complete.
+CREATE TABLE IF NOT EXISTS stream_cursor (
+    source     TEXT PRIMARY KEY,   -- absolute path of the stream file
+    offset     INTEGER NOT NULL,   -- bytes consumed (start of first unprocessed line)
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cl_partial (
+    symbol  TEXT PRIMARY KEY,      -- carrying symbol (BTCUSD_CL)
+    minute  INTEGER NOT NULL,      -- open time of the unsealed minute
+    open    REAL, high REAL, low REAL, close REAL,
+    last_ts INTEGER NOT NULL       -- newest tick folded into this minute
+);
 """
 
 

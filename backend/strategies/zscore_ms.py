@@ -132,53 +132,6 @@ class ZScoreMS(Strategy):
         # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
         # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
-            # Tuned for the Polymarket 5-min UP/DOWN mode (set Mode = "Polymarket
-            # up/down", interval 5m). Chosen by next-candle directional hit rate
-            # validated across Jul/Jun/May 2026: 55.6% / 56.3% / 55.6% (~400
-            # bets/month) -- the most consistent config found, not a one-month
-            # spike. Exit params are unused in that mode.
-            "Polymarket 5m (Reversion)": {
-                "predict_direction": "Reversion",
-                "z_sma_length": 30, "z_std_length": 100,
-                "z_upper": 2.0, "z_lower": -2.0,
-                "require_kc_break": True, "kc_mult": 2.0,
-                "use_bias_ma": False,
-            },
-            # Same signal, restricted to the best weekday. A day-of-week study
-            # over the FULL history (39,735 bets, 2017-2026) found SATURDAY is
-            # this strategy's strongest day in every era, and Monday the weakest:
-            #        all 2017-26 | 2024-26 | 2025-26 | 2026
-            #   Sat       58.08% |  58.60% |  58.38% | 57.43%   <- this preset
-            #   Sun       56.87% |  56.07% |  55.35% | 58.28%
-            #   all days  55.32% |  54.08% |  53.99% | 55.94%
-            #   Mon       53.39% |  50.69% |  52.07% | 54.31%
-            # Sat is ~3.7 sigma above the all-day average and holds in every era.
-            # For ~2x the bets at ~1pp lower hit rate, also tick Sunday
-            # (Sat+Sun: 57.38% all history, 10,756 bets).
-            "Polymarket 5m (Best Day)": {
-                "predict_direction": "Reversion",
-                "z_sma_length": 30, "z_std_length": 100,
-                "z_upper": 2.0, "z_lower": -2.0,
-                "require_kc_break": True, "kc_mult": 2.0,
-                "use_bias_ma": False,
-                "use_trading_window": True,
-                "trade_mon": False, "trade_tue": False, "trade_wed": False,
-                "trade_thu": False, "trade_fri": False, "trade_sat": True,
-                "trade_sun": False,
-                "start_hour": 0, "start_minute": 0, "end_hour": 23, "end_minute": 59,
-            },
-            "Strict Reversion": {
-                "predict_direction": "Reversion", "z_upper": 2.5, "z_lower": -2.5,
-                "require_kc_break": True, "kc_mult": 1.5, "use_bias_ma": False,
-            },
-            "Loose Reversion": {
-                "predict_direction": "Reversion", "z_upper": 1.5, "z_lower": -1.5,
-                "require_kc_break": False, "use_bias_ma": False,
-            },
-            "Momentum": {
-                "predict_direction": "Momentum", "z_upper": 2.0, "z_lower": -2.0,
-                "require_kc_break": True, "kc_mult": 1.5, "use_bias_ma": True,
-            },
             # 20,689 bets, 58.59% hit; 2024-26 57.57%, worst year 51.20%.
             "PM 5m Volume": {
                 "z_sma_length": 20, "z_std_length": 20, "z_upper": 2.0,
@@ -262,6 +215,32 @@ class ZScoreMS(Strategy):
                 "source": 'close', "trade_mon": False, "trade_tue": False,
                 "trade_wed": False, "trade_thu": False, "trade_fri": False,
                 "trade_sat": True, "trade_sun": True,
+            },
+            # --- Re-optimized for VOLUME, 2yr training window ----------------
+            # Coarse grid search (z_sma_length x z_upper/lower magnitude x
+            # kc_mult x require_kc_break; 96 combos) over the trailing 2 years
+            # only (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m
+            # Volume" preset's structural choices (bias-MA and day gate as-is).
+            # Same admission rule as every other strategy's 2yr-Train preset in
+            # this repo: most bets subject to hit rate >= 52% overall AND >= 50%
+            # in BOTH halves of the window. Result: 35,296 bets, 52.07% hit
+            # (51.8% / 52.3% by half), vs. the full-history "PM 5m Volume"
+            # preset's own trailing-2yr numbers of 5,499 bets at 57.03% hit --
+            # 6.4x the bet count for a thinner but still real edge.
+            # CAVEAT: this preset fires on ~17% of all 5-minute bars in the
+            # window. Re-run this search periodically rather than trusting it
+            # indefinitely.
+            "PM 5m Volume - 2yr Train": {
+                "z_sma_length": 20, "z_std_length": 20, "z_upper": 1.0,
+                "z_lower": -1.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 0.5, "use_bias_ma": True,
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "vol_atr_length": 50, "vol_min_atr_pct": 0.05,
+                "vol_max_atr_pct": 1.5, "predict_direction": "Reversion",
+                "use_trading_window": False, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
+                "source": "close",
             },
         }
 

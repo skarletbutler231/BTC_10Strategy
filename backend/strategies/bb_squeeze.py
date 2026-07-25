@@ -124,81 +124,6 @@ class BBSqueeze(Strategy):
         # carry selection bias and the 2024-26 / 2025-26 columns are a recency check,
         # not out-of-sample evidence. Days are UTC; a bar is stamped by its open time.
         return {
-            # --- Tuned on BTCUSDT 15m, 2026-06-21..07-21 (set the interval to 15m
-            #     to reproduce). These use a tight TP / wide SL, which lifts win
-            #     rate but is fragile out-of-sample — validate before trusting.
-            "Hi Win-Rate (15m)": {
-                "predict_direction": "Breakout", "require_squeeze": True,
-                "bb_length": 20, "bb_mult": 2.5, "pctb_upper": 1.0, "pctb_lower": 0.0,
-                "min_body_ratio": 0.3, "bw_squeeze_pct": 50, "use_ema_bias": False,
-                "tp_atr_mult": 0.5, "sl_atr_mult": 3.0, "max_hold_bars": 12,
-            },
-            "Robust (15m)": {
-                "predict_direction": "Breakout", "require_squeeze": False,
-                "bb_length": 20, "bb_mult": 2.5, "pctb_upper": 1.0, "pctb_lower": 0.0,
-                "min_body_ratio": 0.3, "bw_squeeze_pct": 50, "use_ema_bias": False,
-                "tp_atr_mult": 0.5, "sl_atr_mult": 3.0, "max_hold_bars": 48,
-            },
-            # Tuned on BTCUSDT 5m, 2026-06-21..07-21 for a balance of high win rate
-            # AND high PnL (set the interval to 5m). ~83% win, ~+5% month, PF ~1.7.
-            "Hi Win + PnL (5m)": {
-                "predict_direction": "Breakout", "require_squeeze": True,
-                "bb_length": 14, "bb_mult": 2.5, "pctb_upper": 0.85, "pctb_lower": 0.15,
-                "min_body_ratio": 0.3, "bw_squeeze_pct": 25, "use_ema_bias": True,
-                "tp_atr_mult": 1.0, "sl_atr_mult": 3.0, "max_hold_bars": 48,
-            },
-            # For the Polymarket 5-min UP/DOWN mode (set Mode = "Polymarket up/down",
-            # interval 5m). Reversion had the most robust next-candle directional edge
-            # across Jun/Jul/May 2026 (~54-55% hit vs ~50% base). Exit params are
-            # unused in that mode. Edge is thin -- profitable only below ~0.545 odds.
-            "Polymarket 5m (Reversion)": {
-                "predict_direction": "Reversion", "require_squeeze": False,
-                "bb_length": 20, "bb_mult": 2.5, "pctb_upper": 1.0, "pctb_lower": 0.0,
-                "min_body_ratio": 0.3, "use_ema_bias": False,
-            },
-            # Higher-hit-rate variant: fades only when price closes BEYOND the bands
-            # (%B > 1.1 / < -0.1) -- a stronger reversion signal. Validated across
-            # Jul/Jun/May 2026: ~55%/54.7%/58.5% hit (vs the base ~54.6/54.9/57.5),
-            # ~400 bets/month. ~55-56% is about the robust ceiling for BTC 5m.
-            "Polymarket 5m (Hi Hit)": {
-                "predict_direction": "Reversion", "require_squeeze": False,
-                "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
-                "min_body_ratio": 0.0, "use_ema_bias": False,
-            },
-            # Hi Hit restricted to the best weekdays. A day-of-week study over the
-            # FULL history (45,251 bets, 2017-2026) found the reversion edge is
-            # strongest Wed/Thu/Sat and weakest Monday -- consistent across
-            # 2017-26, 2024-26 and 2025-26 (thin weekend/midweek liquidity mean-
-            # reverts more). Hit rate by day-set (all history | last 12 months):
-            #   all days     57.5% | 56.6%
-            #   Wed+Thu+Sat  58.1% | 58.2%   <- this preset
-            #   Mon (worst)  56.2% | ~52% recently
-            "Polymarket 5m (Best Days)": {
-                "predict_direction": "Reversion", "require_squeeze": False,
-                "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.1, "pctb_lower": -0.1,
-                "min_body_ratio": 0.0, "use_ema_bias": False,
-                "use_trading_window": True,
-                "trade_mon": False, "trade_tue": False, "trade_wed": True,
-                "trade_thu": True, "trade_fri": False, "trade_sat": True,
-                "trade_sun": False,
-                "start_hour": 0, "start_minute": 0, "end_hour": 23, "end_minute": 59,
-            },
-            "Squeeze Breakout": {
-                "predict_direction": "Breakout", "require_squeeze": True,
-                "bw_squeeze_pct": 20, "pctb_upper": 1.0, "pctb_lower": 0.0,
-                "use_ema_bias": True, "min_body_ratio": 0.4,
-            },
-            "Mean Reversion": {
-                "predict_direction": "Reversion", "require_squeeze": False,
-                "pctb_upper": 1.0, "pctb_lower": 0.0, "use_ema_bias": False,
-                "min_body_ratio": 0.1, "vol_max_atr_pct": 1.0,
-            },
-            "Trend-Filtered Breakout": {
-                "predict_direction": "Breakout", "require_squeeze": True,
-                "bw_squeeze_pct": 25, "use_ema_bias": True,
-                "use_trend_filter": True, "trend_logic": "With Trend",
-                "ma_type": "EMA", "ma_length": 200, "min_body_ratio": 0.45,
-            },
             # 18,619 bets, 58.04% hit; 2024-26 55.42%, worst year 50.43%.
             "PM 5m Volume": {
                 "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.0,
@@ -288,6 +213,34 @@ class BBSqueeze(Strategy):
                 "ma_length": 200, "source": 'close', "trade_mon": False,
                 "trade_tue": False, "trade_wed": False, "trade_thu": False,
                 "trade_fri": False, "trade_sat": True, "trade_sun": True,
+            },
+            # --- Re-optimized for VOLUME, 2yr training window ----------------
+            # Coarse grid search (bb_length x bb_mult x pctb_upper x
+            # pctb_lower; 192 combos) over the trailing 2 years only
+            # (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m Volume"
+            # preset's structural choices (no squeeze/day gate, with-trend
+            # filter kept). Same admission rule as every other strategy's
+            # 2yr-Train preset in this repo: most bets subject to hit rate
+            # >= 52% overall AND >= 50% in BOTH halves of the window. Result:
+            # 25,661 bets, 52.05% hit (52.0% / 52.1% by half), vs. the
+            # full-history "PM 5m Volume" preset's own trailing-2yr numbers of
+            # 4,480 bets at 55.11% hit -- 5.7x the bet count for a thinner but
+            # still real edge.
+            # CAVEAT: this preset fires on ~12% of all 5-minute bars in the
+            # window. Re-run this search periodically rather than trusting it
+            # indefinitely.
+            "PM 5m Volume - 2yr Train": {
+                "bb_length": 10, "bb_mult": 1.2, "pctb_upper": 1.0,
+                "pctb_lower": 0.0, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": False,
+                "ema_bias_length": 50, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.2, "vol_atr_length": 14,
+                "vol_min_atr_pct": 0.05, "vol_max_atr_pct": 1.5,
+                "predict_direction": "Reversion", "use_trading_window": False,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": True,
+                "trend_logic": "With Trend", "ma_type": "EMA",
+                "ma_length": 200, "source": "close",
             },
         }
 
