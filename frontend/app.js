@@ -117,7 +117,7 @@ let ACTIVE_TAB = 'quick';
 // Canonical presets offered by the bulk "set all" dropdown, in display order.
 // Only the ones every enabled sub-strategy actually has are shown.
 const BULK_PRESETS = [
-  'PM 5m Volume', 'PM 5m Balanced', 'PM 5m Hi Hit',
+  'PM 5m Volume', 'PM 5m Volume - 2yr Train', 'PM 5m Balanced', 'PM 5m Hi Hit',
   'PM 5m Wknd Volume', 'PM 5m Wknd Balanced', 'PM 5m Wknd Hi Hit',
 ];
 

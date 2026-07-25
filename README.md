@@ -136,11 +136,14 @@ Chainlink `start_price`, which **is** Polymarket's settlement reference (they
 agree with recorded outcomes 99.6% of the time). Net result: **99.9% of ~9,400
 windows carry a UP/DOWN label**, split ~50/50 (no directional bias).
 
-Live ingest is a per-minute cron on `run_ingest.sh` (a `flock`-guarded wrapper,
-so a rare slow run can't collide with the next tick):
+Live ingest is driven by **`run_updaters.sh`** — the single entry point for every
+market.db updater (`stream` = Chainlink + Polymarket, `binance` = 1m candles,
+`all` = both). Each job takes its own `flock` lock, so the fast and slow jobs run
+at their own cadences without ever colliding:
 
 ```cron
-* * * * * /work/david/PolyMarket/03_BTC_10Strategy/BTC_10Strategy_git/run_ingest.sh >> <proj>/data/ingest_stream.log 2>&1
+* * * * *    <proj>/run_updaters.sh stream  >> <proj>/data/ingest_stream.log 2>&1
+*/30 * * * * <proj>/run_updaters.sh binance >> <proj>/data/binance_ingest.log 2>&1
 ```
 
 Read the data back with `backend/pm_store.py`: `coverage()`, `windows(lo, hi)`,
