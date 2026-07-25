@@ -64,6 +64,93 @@ The DB is gitignored — rebuild it locally with the command above. Set `USE_DB=
 to bypass the DB and read directly from the Binance API (the original behaviour),
 and `MARKET_DB=/path/to.db` to point at a different file.
 
+## Chainlink settlement data (optional)
+
+Polymarket's **5-minute / 15-minute** BTC up-down markets don't settle on
+Binance — they settle on **Chainlink Data Streams** (partnership since Sept
+2025). Binance is only an ~85% proxy; the disagreement sits right at the strike,
+where edge estimates are most fragile. If you have a Data Streams key, you can
+record the *true* settlement price into the same SQLite store under the symbol
+`BTCUSD_CL`.
+
+Put your credentials in `.env` (gitignored) — see `.env.example` for the keys:
+`CHAINLINK_API_KEY`, `CHAINLINK_USER_SECRET`, `CHAINLINK_BTC_FEED_ID`. Then:
+
+```bash
+python3 -m backend.data.probe_chainlink       # sanity-check key, feed, retention
+python3 -m backend.data.ingest_chainlink       # backfill all retained history, then append
+python3 -m backend.data.basis_report --horizon 5m   # measure the Binance↔Chainlink basis
+```
+
+Key facts (probed 2026-07): the stream updates at **~1 Hz** (folded into 1m OHLC
+on read-resample, same as Binance), but Data Streams only **retains ~3–4 weeks**
+of history — so it *cannot* be a deep-history backtest source. The model is:
+Binance for deep history, Chainlink recorded forward from now. Reports carry
+**no volume** (stored as 0), so volume-based strategies skip `BTCUSD_CL`.
+
+`ingest_chainlink` does backfill *and* incremental append in one path
+(`[max(last+1, now−retention), last complete minute]`), so schedule it per minute
+via cron to keep the series current — it gap-fills missed runs within the
+retention window and is idempotent (`INSERT OR IGNORE`):
+
+```cron
+* * * * * flock -n /tmp/cl_ingest.lock -c 'cd /work/david/PolyMarket/03_BTC_10Strategy/BTC_10Strategy_git && /usr/bin/python3 -m backend.data.ingest_chainlink' >> data/chainlink_ingest.log 2>&1
+```
+
+## Polymarket market data from the pmqb capture (`ingest_stream`)
+
+The sibling **pmqb** bot records, per tick, both the Chainlink BTC price *and* the
+live Polymarket 5-minute UP/DOWN book to `01_EarlyEntry/pmqb/data/stream.jsonl`.
+`ingest_stream` folds that single file into the same `market.db`, giving three
+things a Binance-only backtest can't:
+
+- **`BTCUSD_CL` 1-minute candles** built from the stream's Chainlink price —
+  verified *identical to the cent* to the Data Streams `latest` report, so it
+  shares the symbol with `ingest_chainlink` (whichever writes a minute first
+  wins; `INSERT OR IGNORE`). This backfills history the Data Streams API no
+  longer retains — the capture reaches back **~33 days** (2026-06-20 →).
+- **`pm_window`** — one row per 5-minute market: `start_ts` (on the 5m grid, so
+  it joins straight to a BTC 5m candle), `market_id`, `slug`, Chainlink
+  `start_price` / `end_price`, and `resolved_up`.
+- **`pm_quote`** — the tick-level **YES(UP) share price** (mid + book bid/ask),
+  ~1/second. This is the real tradeable Polymarket odds, so a backtest can price
+  an entry from the actual quote *N seconds into the window* instead of assuming
+  a flat 0.5.
+
+```bash
+python3 -m backend.data.ingest_stream            # backfill (first run) / append (later)
+python3 -m backend.data.ingest_stream --reset    # rescan from offset 0
+STREAM_FILE=/path/to/stream.jsonl python3 -m backend.data.ingest_stream
+```
+
+It's a **resumable tail**: a byte cursor per source file lives in `stream_cursor`,
+so the first run backfills the whole file (~4.4 GB, ~50 s) and each later run
+reads only what was appended (sub-second). The still-forming trailing 1-minute
+Chainlink candle is held back in `cl_partial` so an incomplete minute is never
+sealed. Everything is idempotent.
+
+**Resolution provenance** (`pm_window.resolved_src`): windows the capture logged
+a Chainlink outcome for are `'chainlink'` (authoritative). Older windows — before
+pmqb logged outcomes — are resolved `'boundary'`, from the *next* window's
+Chainlink `start_price`, which **is** Polymarket's settlement reference (they
+agree with recorded outcomes 99.6% of the time). Net result: **99.9% of ~9,400
+windows carry a UP/DOWN label**, split ~50/50 (no directional bias).
+
+Live ingest is a per-minute cron on `run_ingest.sh` (a `flock`-guarded wrapper,
+so a rare slow run can't collide with the next tick):
+
+```cron
+* * * * * /work/david/PolyMarket/03_BTC_10Strategy/BTC_10Strategy_git/run_ingest.sh >> <proj>/data/ingest_stream.log 2>&1
+```
+
+Read the data back with `backend/pm_store.py`: `coverage()`, `windows(lo, hi)`,
+`quotes(start_ts)`, and `quote_at(start_ts, elapsed)` — the last returns the YES
+price at/just before a given second into a window, i.e. a realistic fill price.
+
+> Note: this live path depends on the pmqb recorder running. If pmqb stops,
+> `ingest_stream` simply finds nothing new; `ingest_chainlink` (Data Streams API)
+> remains an independent source for `BTCUSD_CL`.
+
 ## Using the dashboard
 
 1. Pick a **strategy**, **symbol** (default `BTCUSDT`), **interval**, and a
@@ -559,12 +646,18 @@ numbers. The remaining video strategies are listed as TODOs in that `__init__.py
 backend/
   main.py            FastAPI app + routes + static serving
   store.py           DB-backed candle reader: resample-from-1m + live gap-fill
-  db.py              SQLite connection + schema (candles, ingest_log)
+  pm_store.py        Polymarket window/quote reader (coverage, quote_at, …)
+  db.py              SQLite connection + schema (candles, ingest_log, pm_window, pm_quote)
   binance.py         Binance klines (stdlib urllib, paginated, host fallback)
+  chainlink.py       Chainlink Data Streams client (BTC/USD, HMAC-signed)
   data/
-    ingest.py        bulk-loader: data.binance.vision zips -> SQLite (idempotent)
+    ingest.py            bulk-loader: data.binance.vision zips -> SQLite (idempotent)
+    ingest_chainlink.py  Chainlink Data Streams -> BTCUSD_CL candles (live/backfill)
+    ingest_stream.py     pmqb stream.jsonl -> BTCUSD_CL candles + pm_window/pm_quote
+    basis_report.py      Binance vs Chainlink price/direction basis
   indicators.py      ATR / RSI / extremes / MAs / std / percentile (pure Python)
   engine.py          backtest engine + shared Exit/Backtest params
+  polymarket.py      binary (Polymarket up/down) backtest scorer
   registry.py        strategy registry
   strategies/
     base.py          Strategy base class, Param / ParamGroup / Signal
