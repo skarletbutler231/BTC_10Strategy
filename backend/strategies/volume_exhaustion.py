@@ -377,21 +377,23 @@ PRESETS: dict = {
         "predict_direction": 'Reversion',
         **_WEEKEND,
     },
-    # --- Re-optimized for VOLUME, 2yr training window -------------------------
-    # Coarse grid search (vol_spike_mult x vol_rank_min x vol_ma_length; 108
-    # combos) over the trailing 2 years only (2024-07-19 -> 2026-07-19),
-    # anchored on this file's "PM 5m Volume" preset's structural choices
-    # (Against Trend, wide-ish ATR band). Same admission rule as every other
-    # strategy's 2yr-Train preset in this repo: most bets subject to hit rate
-    # >= 52% overall AND >= 50% in BOTH halves of the window. Result: 25,446
-    # bets, 53.27% hit (53.3% / 53.2% by half), vs. the full-history "PM 5m
-    # Volume" preset's own trailing-2yr numbers of 5,612 bets at 55.06% hit --
-    # 4.5x the bet count for a thinner but still real edge.
-    # CAVEAT: this preset fires on ~12% of all 5-minute bars in the window.
-    # Re-run this search periodically rather than trusting it indefinitely.
+    # --- Re-optimized for HIT RATE at similar volume, 2yr window -------------
+    # Same coarse grid as before (vol_spike_mult x vol_rank_min x
+    # vol_ma_length; 108 combos), trailing 2 years only (2024-07-19 ->
+    # 2026-07-19). CHANGED OBJECTIVE from the previous version of this
+    # preset: instead of maximizing bet count, this picks the combo whose bet
+    # count stays close to the full-history "PM 5m Volume" preset's own
+    # trailing-2yr count (5,612 bets) while maximizing hit rate, subject to
+    # both halves of the window individually clearing 50%. Result: 4,498 bets
+    # (80% of baseline -- a +/-20% band was enough) at 55.49% hit (55.0% /
+    # 55.9% by half) vs. baseline's 5,612 bets at 54.95%.
+    # CAVEAT: that's a +0.54pp edge over baseline -- within noise at this
+    # sample size (standard error is roughly +/-1pp). Kept as the best
+    # available at comparable volume, but don't read this as meaningfully
+    # better than just using "PM 5m Volume" directly.
     "PM 5m Volume - 2yr Train": {
-        "vol_ma_length": 50, "vol_spike_mult": 1.0,
-        "vol_rank_lookback": 200, "vol_rank_min": 70,
+        "vol_ma_length": 10, "vol_spike_mult": 2.5,
+        "vol_rank_lookback": 200, "vol_rank_min": 85,
         "min_body_ratio": 0.2, "wick_min": 0.0,
         "vol_atr_length": 50, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
         "use_trend_filter": True, "trend_logic": "Against Trend",

@@ -222,27 +222,26 @@ class RegimeSwitch(Strategy):
                 "trade_tue": False, "trade_wed": False, "trade_thu": False,
                 "trade_fri": False, "trade_sat": True, "trade_sun": True,
             },
-            # --- Re-optimized for VOLUME, 2yr training window ----------------
-            # Coarse grid search (channel_length x breakout_buffer_atr x
-            # regime_threshold; 45 combos) over the trailing 2 years only
-            # (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m
-            # Volume" preset's structural choices (both regimes traded, Always
-            # Reversion mapping, with-trend filter). Same admission rule as
-            # every other strategy's 2yr-Train preset in this repo: most bets
-            # subject to hit rate >= 52% overall AND >= 50% in BOTH halves of
-            # the window. Result: 19,777 bets, 52.86% hit (52.5% / 53.2% by
-            # half), vs. the full-history "PM 5m Volume" preset's own
-            # trailing-2yr numbers of 5,496 bets at 55.91% hit -- 3.6x the bet
-            # count for a thinner but still real edge (the smallest volume
-            # multiple of the ten strategies here).
-            # CAVEAT: this preset fires on ~9% of all 5-minute bars in the
-            # window. Re-run this search periodically rather than trusting it
-            # indefinitely.
+            # --- Re-optimized for HIT RATE at similar volume, 2yr window ------
+            # Same coarse grid as before (channel_length x
+            # breakout_buffer_atr x regime_threshold; 45 combos), trailing 2
+            # years only (2024-07-19 -> 2026-07-19). CHANGED OBJECTIVE from the
+            # previous version of this preset: instead of maximizing bet
+            # count, this picks the combo whose bet count stays close to the
+            # full-history "PM 5m Volume" preset's own trailing-2yr count
+            # (5,500 bets) while maximizing hit rate, subject to both halves
+            # of the window individually clearing 50%. Result: 4,009 bets
+            # (73% of baseline -- needed a +/-40% band) at 56.25% hit (55.9% /
+            # 56.6% by half) vs. baseline's 5,500 bets at 55.91%.
+            # CAVEAT: that's a +0.34pp edge over baseline -- within noise at
+            # this sample size (standard error is roughly +/-1pp). Kept as
+            # the best available at comparable volume, but don't read this as
+            # meaningfully better than just using "PM 5m Volume" directly.
             "PM 5m Volume - 2yr Train": {
                 "regime_method": "ADX", "regime_length": 14,
                 "regime_threshold": 15, "trade_trend_regime": True,
-                "trade_range_regime": True, "channel_length": 5,
-                "breakout_buffer_atr": 0.0, "min_body_ratio": 0.2,
+                "trade_range_regime": True, "channel_length": 20,
+                "breakout_buffer_atr": 0.15, "min_body_ratio": 0.2,
                 "regime_mapping": "Always Reversion", "vol_atr_length": 50,
                 "vol_min_atr_pct": 0.0, "vol_max_atr_pct": 20.0,
                 "use_trading_window": False, "start_hour": 0, "start_minute": 0,

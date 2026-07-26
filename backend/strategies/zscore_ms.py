@@ -216,24 +216,25 @@ class ZScoreMS(Strategy):
                 "trade_wed": False, "trade_thu": False, "trade_fri": False,
                 "trade_sat": True, "trade_sun": True,
             },
-            # --- Re-optimized for VOLUME, 2yr training window ----------------
-            # Coarse grid search (z_sma_length x z_upper/lower magnitude x
-            # kc_mult x require_kc_break; 96 combos) over the trailing 2 years
-            # only (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m
-            # Volume" preset's structural choices (bias-MA and day gate as-is).
-            # Same admission rule as every other strategy's 2yr-Train preset in
-            # this repo: most bets subject to hit rate >= 52% overall AND >= 50%
-            # in BOTH halves of the window. Result: 35,296 bets, 52.07% hit
-            # (51.8% / 52.3% by half), vs. the full-history "PM 5m Volume"
-            # preset's own trailing-2yr numbers of 5,499 bets at 57.03% hit --
-            # 6.4x the bet count for a thinner but still real edge.
-            # CAVEAT: this preset fires on ~17% of all 5-minute bars in the
-            # window. Re-run this search periodically rather than trusting it
-            # indefinitely.
+            # --- Re-optimized for HIT RATE at similar volume, 2yr window ------
+            # Same coarse grid as before (z_sma_length x z_upper/lower
+            # magnitude x kc_mult x require_kc_break; 96 combos), trailing 2
+            # years only (2024-07-19 -> 2026-07-19), objective changed to:
+            # closest bet count to the full-history "PM 5m Volume" preset's
+            # own trailing-2yr count (5,499 bets) while maximizing hit rate,
+            # subject to both halves of the window individually clearing 50%.
+            #
+            # RESULT: NO COMBINATION IN THE GRID BEAT "PM 5m Volume"'s OWN HIT
+            # RATE (57.03%) at any bet-count band, including the full "any n"
+            # search. This preset is therefore set IDENTICAL to "PM 5m
+            # Volume" -- i.e. the existing preset already sits at (or above)
+            # what this grid can find, so there is nothing to gain from a
+            # separate "2yr Train" variant here. A finer/wider grid might
+            # still find something; this one didn't.
             "PM 5m Volume - 2yr Train": {
-                "z_sma_length": 20, "z_std_length": 20, "z_upper": 1.0,
-                "z_lower": -1.0, "require_kc_break": True, "kc_ema_length": 20,
-                "kc_atr_length": 20, "kc_mult": 0.5, "use_bias_ma": True,
+                "z_sma_length": 20, "z_std_length": 20, "z_upper": 2.0,
+                "z_lower": -2.0, "require_kc_break": True, "kc_ema_length": 20,
+                "kc_atr_length": 20, "kc_mult": 1.5, "use_bias_ma": True,
                 "bias_ema_length": 200, "bias_slope_lookback": 5,
                 "vol_atr_length": 50, "vol_min_atr_pct": 0.05,
                 "vol_max_atr_pct": 1.5, "predict_direction": "Reversion",

@@ -333,24 +333,23 @@ PRESETS: dict = {
         "predict_direction": 'Reversion',
         **_WEEKEND,
     },
-    # --- Re-optimized for VOLUME, 2yr training window -------------------------
-    # Coarse grid search (cci_threshold x wr_overbought x wr_oversold x
-    # cci_length; 320 combos) over the trailing 2 years only (2024-07-19 ->
-    # 2026-07-19), anchored on this file's "PM 5m Volume" preset's structural
-    # choices (wick-confirm kept on). Same admission rule as every other
-    # strategy's 2yr-Train preset in this repo: most bets subject to hit rate
-    # >= 52% overall AND >= 50% in BOTH halves of the window. Result: 71,434
-    # bets, 52.24% hit (52.3% / 52.2% by half), vs. the full-history "PM 5m
-    # Volume" preset's own trailing-2yr numbers of 8,535 bets at 55.55% hit --
-    # 8.4x the bet count for a thinner but still real edge.
-    # CAVEAT: this preset fires on ~33% of all 5-minute bars in the window,
-    # and every threshold landed at (or past) the loosest value tested -- this
-    # is close to the loosest setting the grid covered, not a confirmed
-    # interior optimum. Re-run this search periodically rather than trusting
-    # it indefinitely.
+    # --- Re-optimized for HIT RATE at similar volume, 2yr window -------------
+    # Same coarse grid as before (cci_threshold x wr_overbought x
+    # wr_oversold x cci_length; 320 combos), trailing 2 years only
+    # (2024-07-19 -> 2026-07-19), objective changed to: closest bet count to
+    # the full-history "PM 5m Volume" preset's own trailing-2yr count (8,544
+    # bets) while maximizing hit rate, subject to both halves of the window
+    # individually clearing 50%.
+    #
+    # RESULT: NO COMBINATION IN THE GRID BEAT "PM 5m Volume"'s OWN HIT RATE
+    # (55.44%) at any bet-count band, including the full "any n" search --
+    # the best alternative found (23,074 bets, cci_threshold=90) only reached
+    # 54.03%, still worse than baseline. This preset is therefore set
+    # IDENTICAL to "PM 5m Volume" -- there is nothing in this grid that beats
+    # it. A finer/wider grid might still find something; this one didn't.
     "PM 5m Volume - 2yr Train": {
-        "cci_length": 10, "cci_threshold": 60,
-        "wr_length": 10, "wr_overbought": -25, "wr_oversold": -75,
+        "cci_length": 16, "cci_threshold": 110,
+        "wr_length": 10, "wr_overbought": -5, "wr_oversold": -95,
         "use_wick_confirm": True, "wick_min": 0.05,
         "close_recover_min": 0.0, "vol_atr_length": 14,
         "atr_pct_min": 0.05, "atr_pct_max": 1.5,

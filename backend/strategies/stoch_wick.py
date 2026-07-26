@@ -225,25 +225,24 @@ class StochWick(Strategy):
                 "predict_direction": 'Reversion',
                 **_WEEKEND,
             },
-            # --- Re-optimized for VOLUME, 2yr training window ----------------
-            # Coarse grid search (stoch_k_length x overbought x oversold x
-            # min_wick_ratio; 150 combos) over the trailing 2 years only
-            # (2024-07-19 -> 2026-07-19), anchored on this file's "PM 5m Volume"
-            # preset's structural choices (no ADX/trend filter, all days). Same
-            # admission rule as every other strategy's 2yr-Train preset in this
-            # repo: most bets subject to hit rate >= 52% overall AND >= 50% in
-            # BOTH halves of the window. Result: 105,777 bets, 52.23% hit (52.1%
-            # / 52.3% by half), vs. the full-history "PM 5m Volume" preset's own
-            # trailing-2yr numbers of 7,071 bets at 55.61% hit -- 15x the bet
-            # count for a thinner but still real edge.
-            # CAVEAT: this preset fires on ~50% of ALL 5-minute bars in the
-            # window -- essentially every other candle. Adjacent bets are not
-            # independent trials, so treat the hit-rate floor as a rough guide,
-            # not a rigorous significance test. Re-run this search periodically
-            # rather than trusting it indefinitely.
+            # --- Re-optimized for HIT RATE at similar volume, 2yr window ------
+            # Same coarse grid as before (stoch_k_length x overbought x
+            # oversold x min_wick_ratio; 150 combos), trailing 2 years only
+            # (2024-07-19 -> 2026-07-19). CHANGED OBJECTIVE from the previous
+            # version of this preset: instead of maximizing bet count, this
+            # picks the combo whose bet count stays close to the full-history
+            # "PM 5m Volume" preset's own trailing-2yr count (7,075 bets) while
+            # maximizing hit rate, subject to both halves of the window
+            # individually clearing 50%. Result: 5,192 bets (73% of baseline
+            # -- needed a +/-40% band) at 55.59% hit (56.3% / 54.8% by half)
+            # vs. baseline's 7,075 bets at 55.53%.
+            # CAVEAT: that's a +0.06pp edge over baseline -- noise, not a real
+            # improvement (standard error at this n is roughly +/-1pp). Kept
+            # as the best available, but don't read this as meaningfully
+            # better than just using "PM 5m Volume" directly.
             "PM 5m Volume - 2yr Train": {
-                "stoch_k_length": 14, "stoch_d_length": 1, "overbought": 75,
-                "oversold": 25, "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "stoch_k_length": 7, "stoch_d_length": 1, "overbought": 95,
+                "oversold": 5, "min_wick_ratio": 0.1, "min_close_recovery": 0.0,
                 "use_adx_filter": False, "adx_length": 14, "adx_max": 30,
                 "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
                 "use_trend_filter": False, "trend_logic": "With Trend",

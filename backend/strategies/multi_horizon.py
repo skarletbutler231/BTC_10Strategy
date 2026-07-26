@@ -518,23 +518,21 @@ PRESETS: dict = {
         "predict_direction": 'Reversion',
         **_WEEKEND,
     },
-    # --- Re-optimized for VOLUME, 2yr training window -------------------------
-    # Coarse grid search (z_threshold x h_fast x h_slow; 28 combos) over the
-    # trailing 2 years only (2024-07-19 -> 2026-07-19), anchored on this
-    # file's "PM 5m Volume" preset's structural choices (min_agree=1, opposing
-    # bar required, no trend filter). Same admission rule as every other
-    # strategy's 2yr-Train preset in this repo: most bets subject to hit rate
-    # >= 52% overall AND >= 50% in BOTH halves of the window. Result: 61,211
-    # bets, 52.14% hit (51.8% / 52.5% by half), vs. the full-history "PM 5m
-    # Volume" preset's own trailing-2yr numbers of 4,610 bets at 56.01% hit --
-    # 13.3x the bet count for a thinner but still real edge.
-    # CAVEAT: this preset fires on ~29% of all 5-minute bars in the window,
-    # and z_threshold (1.25) is close to the loosest setting tested -- a
-    # "stretch" this shallow is a much weaker signal than the video's original
-    # concept. Re-run this search periodically rather than trusting it
-    # indefinitely.
+    # --- Re-optimized for HIT RATE at similar volume, 2yr window -------------
+    # Same coarse grid as before (z_threshold x h_fast x h_slow; 28 combos),
+    # trailing 2 years only (2024-07-19 -> 2026-07-19), objective changed to:
+    # closest bet count to the full-history "PM 5m Volume" preset's own
+    # trailing-2yr count (4,621 bets) while maximizing hit rate, subject to
+    # both halves of the window individually clearing 50%.
+    #
+    # RESULT: NO COMBINATION IN THE GRID BEAT "PM 5m Volume"'s OWN HIT RATE
+    # (55.81%) at any bet-count band, including the full "any n" search --
+    # the best alternative found was the baseline's own parameters again
+    # (z_threshold=3.0, h_fast=12, h_slow=48). This preset is therefore set
+    # IDENTICAL to "PM 5m Volume" -- there is nothing in this grid that beats
+    # it. A finer/wider grid might still find something; this one didn't.
     "PM 5m Volume - 2yr Train": {
-        "h_fast": 6, "h_mid": 24, "h_slow": 48, "z_threshold": 1.25,
+        "h_fast": 12, "h_mid": 24, "h_slow": 48, "z_threshold": 3.0,
         "min_agree": 1, "require_fast": False, "vol_atr_length": 14,
         "atr_pct_min": 0.0, "atr_pct_max": 20.0,
         "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
