@@ -8,8 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**Five strategies are implemented: #4 — BB Squeeze, #7 — Volume Exhaustion,
-#8 — Jump Exhaustion, #9 — CCI Williams, and #10 — Multi Horizon.**
+**All ten of the video's strategies are implemented**, plus **Fib Retracement**
+as an addition beyond them.
 
 ---
 
@@ -30,6 +30,26 @@ own `PORT`. An inline override still wins for one-off runs: `PORT=9000 ./run.sh`
 FastAPI + uvicorn are the only dependencies (already present system-wide here).
 Everything else — the Binance client, data store, indicators, and backtest
 engine — is pure standard-library Python.
+
+### Strategies
+
+In dashboard dropdown order. Every one ships Polymarket-tuned 5m presets; the
+linked sections document how each was fitted and what it is worth.
+
+| # | Strategy | Idea |
+|---|----------|------|
+| 1 | [RSI + BB](#rsi--bb-strategy-1) | Fade the band stretch with RSI at an extreme |
+| 2 | Stoch Wick | Stochastic extreme plus a rejection wick |
+| 3 | ATR DevExh | Fade an ATR-scaled deviation from the mean |
+| 4 | [BB Squeeze](#bb-squeeze-strategy-4) | Trade the coil when Bollinger bandwidth compresses |
+| 5 | [Zscore MS](#zscore-ms-strategy-5) | Fade a statistical stretch, optionally Keltner-confirmed |
+| 6 | [Regime Switch](#regime-switch-strategy-6) | Detect trending vs ranging, apply the matching playbook |
+| 7 | [Volume Exhaustion](#volume-exhaustion-strategy-7) | Fade the climax bar printed on abnormal volume |
+| 8 | [Jump Exhaustion](#jump-exhaustion-strategy-8) | Fade the overshoot — the Saturday effect |
+| 9 | [CCI Williams](#cci-williams-strategy-9) | Two oscillators must agree on exhaustion |
+| 10 | [Multi Horizon](#multi-horizon-strategy-10) | Z-score agreement across three timeframes — **strongest here** |
+| + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
+| ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
 
@@ -319,6 +339,117 @@ Three findings came out of the sweep:
 - **"With Trend" here**, which combined with Reversion means buying a
   down-stretch while price is above the MA — buy the dip in an uptrend. (Volume
   Exhaustion preferred *Against* Trend; different setups, no contradiction.)
+
+## Fib Retracement (beyond the video)
+
+*Trade the pullback inside a measured swing leg.* Take a swing **leg** — a
+low-to-high push or its mirror — and measure how much of it price has since
+given back, as a fraction of the leg. The classic trade enters as price pulls
+back into one of the canonical levels (23.6 / 38.2 / 50 / 61.8 / 78.6 %),
+betting the leg resumes.
+
+Discretion is the usual problem with this tool: pick a different swing high and
+every level moves. So the leg is defined mechanically and causally — inside a
+rolling `swing_lookback` window, take the highest high and the lowest low, and
+whichever came **last** ends the leg and gives it direction. No manual
+anchoring, no look-ahead, and the retracement is always in [0, 1].
+
+| Group | Params |
+|-------|--------|
+| **Swing Leg** | `swing_lookback`, `min_leg_atr`, `min_leg_bars` |
+| **Fibonacci** | `fib_level`, `fib_tolerance`, `require_fresh_touch` ☑ |
+| **Entry Timing** | `require_opposing_bar` ☑, `opposing_bar_min_atr` |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
+| **Decision** | `predict_direction` (Trend Resume ⋁ Retrace Deeper) |
+| **Day of Week (UTC)** | `trade_mon` … `trade_sun` ☑ |
+
+`fib_level` is a **free float, not a dropdown of the five blessed values** — on
+purpose, so a sweep can ask whether 0.618 does anything 0.55 and 0.70 don't.
+
+### The Fibonacci ratios earn nothing
+
+The level grid interleaved the canonical ratios with non-canonical neighbours.
+Hit rate is **monotone in retracement depth** with no bump at the golden-ratio
+values. Each level is also compared against the mean of its two grid neighbours,
+holding every other parameter fixed:
+
+| Level | Hit | vs neighbours | | Level | Hit | vs neighbours |
+|------:|----:|--------------:|-|------:|----:|--------------:|
+| **0.236*** | 49.43% | −1.07pp | | 0.55 | 52.40% | −0.06pp |
+| 0.30 | 50.49% | +0.12pp | | **0.618*** | 52.82% | **−0.09pp** |
+| **0.382*** | 51.43% | +0.28pp | | 0.70 | 53.73% | +0.24pp |
+| 0.45 | 51.98% | +0.21pp | | **0.786*** | 54.78% | +0.45pp |
+| **0.50*** | 52.21% | +0.04pp | | 0.85 | 55.61% | +0.83pp |
+
+<sub>* = canonical Fibonacci level. 50% isn't one either — it's the plain
+midpoint, included by convention.</sub>
+
+0.618 — the level every chartist watches — lands 0.09pp **below** the average of
+its neighbours. The depth curve flattens and turns over past 0.85 (0.85 = 55.88%,
+0.90 = 55.76%, 0.95 = 55.55%). `fib_level` is a depth knob wearing a Fibonacci
+hat.
+
+### …but the leg does earn its keep
+
+A deep retracement means the close sits near the far end of the window's range —
+which is what Williams %R measures with no Fibonacci and no leg at all. So the
+leg gate was tested against a matched control keeping the window, leg-size floor,
+zone, first-touch, opposing-bar and volatility rules, removing **only** the
+requirement that the swing be intact (high after low, no new low since):
+
+| Config | Fib bets | Fib hit | Control bets | Control hit | z |
+|---|---:|---:|---:|---:|---:|
+| lb=24, lvl=0.85 | 13,365 | 54.96% | 74,025 | 54.01% | +2.03 |
+| lb=24, lvl=0.95 | 5,010 | 54.83% | 71,056 | 55.06% | −0.31 |
+| lb=48, lvl=0.618 | 27,505 | 52.98% | 56,071 | 52.11% | +2.38 |
+| lb=144, lvl=0.85 | 3,595 | 56.75% | 26,668 | 53.46% | +3.71 |
+
+The structural half of the idea is real; the arithmetic half is not. What this
+actually trades is *"price rallied, gave nearly all of it back, but held above
+the prior low — buy that retest"*, and the leg definition is what encodes the
+holding-above part.
+
+### Polymarket presets
+
+Three sweep stages, 10,800 combinations, whole DB (938,857 5m bars, 2017-08 →
+2026-07). Parameters chosen on **2017-2023 only**; the TEST column was scored
+afterwards and never consulted while selecting.
+
+| Preset | Bets | Hit | Train 17-23 | TEST 24-26 | 2025-26 | Worst yr | z |
+|--------|-----:|----:|------------:|-----------:|--------:|---------:|--:|
+| **PM 5m Balanced** | 7,338 | 58.16% | 58.86% | **56.66%** | **56.32%** | 50.75% | 14.0 |
+| PM 5m Volume | 18,205 | 55.31% | 56.46% | 52.36% | 51.86% | 51.41% | **14.3** |
+| PM 5m Selective | 3,843 | 57.69% | 60.41% | 53.63% | 53.31% | 51.89% | 9.5 |
+| PM 5m Hi Hit | 1,132 | 59.45% | 62.77% | 53.09% | 54.66% | 50.66% | 6.4 |
+
+***Balanced is the preset to use*** — the only tier that survives the holdout
+intact: 56.66% across 2,328 out-of-sample bets, still 56.32% over 2025-26, and
+every year bar the partial 2017 at or above 54.8%. The other three are shipped to
+show the frontier, not as recommendations.
+
+Findings beyond the numbers:
+
+- **Trend Resume only.** All 50 of the top-50 training configs bet the leg
+  resumes (pooled: 51.73% vs 49.40%). Since buying a pullback means fading the
+  most recent move, this is a mean-reversion result too — the fourth strategy
+  here to land there.
+- **`require_opposing_bar` is the most valuable single filter**, as in Multi
+  Horizon: ON 52.51% vs OFF 49.75%, z=+189. Demanding a real body helps
+  monotonically (0.0 → 0.75 ×ATR gives 54.94 → 56.01%).
+- **"Against Trend" helps** (57.74% vs 57.03% filter-off), matching Volume
+  Exhaustion. With Trend Resume that means buying the pullback while price is
+  *below* the MA.
+- **No weekend gate.** Split by UTC day at fixed parameters, the premium is
+  +0.43 / +2.32 / −2.06pp on Balanced / Selective / Hi Hit, all |z| < 1.4.
+
+⚠️ **Two caveats specific to this strategy.** **Shrinkage scales with training
+hit rate, steeply** — ranked by train hit the four tiers lose 2.2 / 4.1 / 6.8 /
+9.7 points out-of-sample, exactly inverting the order, so the best-looking preset
+in-sample (Hi Hit, 62.77%) is the worst out of it (53.09%). And **train-internal
+stability did not predict survival**: configs scoring 63.7% and 66.4% on the two
+halves of the training span still collapsed to 50.0% on 2024-26. Only the real
+holdout separated these tiers — which is the argument for keeping one.
 
 ## Volume Exhaustion (strategy #7)
 
@@ -641,7 +772,8 @@ treat it as suggestive. Days are UTC.
 That's it — it appears in the dropdown and its params render automatically. Params
 support four `kind`s — `int`, `float`, `bool` (checkbox), and `enum` (dropdown,
 via `options=[…]`) — so a strategy can expose toggles and choices, not just
-numbers. The remaining video strategies are listed as TODOs in that `__init__.py`.
+numbers. All ten of the video's strategies are implemented; `Fib Retracement` is
+an addition beyond them, held to the same evidence bar.
 
 ## Layout
 
@@ -669,6 +801,7 @@ backend/
     cci_williams.py
     volume_exhaustion.py
     multi_horizon.py
+    fib_retracement.py   beyond the video: swing-leg Fibonacci retracement
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)

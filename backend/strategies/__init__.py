@@ -10,6 +10,7 @@ from .atr_devexh import AtrDevExh
 from .bb_squeeze import BBSqueeze
 from .cci_williams import CCIWilliams
 from .combined import Combined
+from .fib_retracement import FibRetracement
 from .jump_exhaustion import JumpExhaustion
 from .multi_horizon import MultiHorizon
 from .regime_switch import RegimeSwitch
@@ -30,6 +31,10 @@ register(JumpExhaustion())
 register(CCIWilliams())
 register(MultiHorizon())
 
+# Beyond the video's ten: classic chart-analysis tools implemented on the same
+# framework and held to the same evidence bar.
+register(FibRetracement())
+
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
 
@@ -44,3 +49,6 @@ register(Combined())
 #   8. Jump Exhaustion     (jump_exhaustion.py)    <-- DONE
 #   9. CCI Williams        (cci_williams.py)       <-- DONE
 #  10. Multi Horizon       (multi_horizon.py)      <-- DONE
+#
+# --- Additions beyond the video ----------------------------------------------
+#      Fib Retracement    (fib_retracement.py)    <-- DONE

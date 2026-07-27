@@ -8,6 +8,7 @@ easy to read and port.
 
 from __future__ import annotations
 
+from collections import deque
 from typing import List, Optional
 
 Num = Optional[float]
@@ -283,6 +284,52 @@ def rolling_high_low(candles: list[dict], window: int):
         hi[i] = max(highs[i - window + 1: i + 1])
         lo[i] = min(lows[i - window + 1: i + 1])
     return lo, hi
+
+
+def rolling_swing(candles: list[dict], window: int):
+    """Rolling window extremes *with their bar indices* -> (hh, ll, hi_i, lo_i).
+
+    Like :func:`rolling_high_low` but it also reports WHERE inside the window
+    each extreme sits, which is what turns a pair of extremes into a directed
+    swing *leg*: if the high came after the low the leg is up, and vice versa.
+    Entries are None until `window` bars are available.
+
+    Computed in O(n) with two monotonic deques rather than re-scanning the
+    window at every bar — the difference matters when a parameter sweep walks
+    ~1M bars thousands of times. Ties resolve to the MOST RECENT extreme, so a
+    flat run is attributed to its latest bar.
+    """
+    n = len(candles)
+    hh: List[Num] = [None] * n
+    ll: List[Num] = [None] * n
+    hi_i: List[Optional[int]] = [None] * n
+    lo_i: List[Optional[int]] = [None] * n
+    if window <= 0 or n < window:
+        return hh, ll, hi_i, lo_i
+
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    dmax: deque = deque()   # indices, highs strictly decreasing front -> back
+    dmin: deque = deque()   # indices, lows strictly increasing front -> back
+    for i in range(n):
+        h, l = highs[i], lows[i]
+        while dmax and highs[dmax[-1]] <= h:
+            dmax.pop()
+        dmax.append(i)
+        while dmin and lows[dmin[-1]] >= l:
+            dmin.pop()
+        dmin.append(i)
+        lo_bound = i - window + 1
+        if dmax[0] < lo_bound:
+            dmax.popleft()
+        if dmin[0] < lo_bound:
+            dmin.popleft()
+        if i >= window - 1:
+            hi_i[i] = dmax[0]
+            lo_i[i] = dmin[0]
+            hh[i] = highs[dmax[0]]
+            ll[i] = lows[dmin[0]]
+    return hh, ll, hi_i, lo_i
 
 
 def adx(candles: list[dict], period: int) -> List[Num]:
