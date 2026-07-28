@@ -115,7 +115,10 @@ const DEFAULT_PRESET = '— defaults —';
 let ACTIVE_TAB = 'quick';
 
 // Canonical presets offered by the bulk "set all" dropdown, in display order.
-// Only the ones every enabled sub-strategy actually has are shown.
+// A preset is offered when at least one sub-strategy has it; setAllPresets()
+// then skips the strategies that don't. Requiring *every* sub-strategy to have
+// it silently emptied this list as strategies with their own preset sets were
+// added (Fair Value Gap alone cut it from 7 options to 1).
 const BULK_PRESETS = [
   'PM 5m Volume', 'PM 5m Volume - 2yr Train', 'PM 5m Balanced', 'PM 5m Hi Hit',
   'PM 5m Wknd Volume', 'PM 5m Wknd Balanced', 'PM 5m Wknd Hi Hit',
@@ -152,12 +155,13 @@ function buildQuickSetup(schema) {
   const mx = byKey.min_agree;
   if (mx && mx.max != null) $('minAgree').max = mx.max;
 
-  // Bulk dropdown: offer only presets present in EVERY sub-strategy, so
-  // "set all" can never leave a strategy on a preset it doesn't have.
+  // Bulk dropdown: offer a preset if any sub-strategy has it. setAllPresets()
+  // only assigns it where the option exists, so a strategy is never left on a
+  // preset it doesn't have.
   const optionSets = Object.keys(byKey)
     .filter((k) => k.startsWith('preset_'))
     .map((k) => new Set(byKey[k].options || []));
-  const common = BULK_PRESETS.filter((name) => optionSets.every((s) => s.has(name)));
+  const common = BULK_PRESETS.filter((name) => optionSets.some((s) => s.has(name)));
   const bulk = $('bulkPreset');
   bulk.innerHTML = '<option value="">— choose —</option>'
     + common.map((n) => `<option value="${n}">${n}</option>`).join('');
