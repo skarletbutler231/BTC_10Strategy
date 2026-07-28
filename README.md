@@ -158,12 +158,14 @@ windows carry a UP/DOWN label**, split ~50/50 (no directional bias).
 
 Live ingest is driven by **`run_updaters.sh`** — the single entry point for every
 market.db updater (`stream` = Chainlink + Polymarket, `binance` = 1m candles,
-`all` = both). Each job takes its own `flock` lock, so the fast and slow jobs run
-at their own cadences without ever colliding:
+`pmdata` = Polymarket L2 order book, `all` = all three). Each job takes its own
+`flock` lock, so the fast and slow jobs run at their own cadences without ever
+colliding:
 
 ```cron
 * * * * *    <proj>/run_updaters.sh stream  >> <proj>/data/ingest_stream.log 2>&1
 */30 * * * * <proj>/run_updaters.sh binance >> <proj>/data/binance_ingest.log 2>&1
+40 1 * * *   <proj>/run_updaters.sh pmdata  >> <proj>/data/pmdata_ingest.log 2>&1
 ```
 
 Read the data back with `backend/pm_store.py`: `coverage()`, `windows(lo, hi)`,
@@ -173,6 +175,168 @@ price at/just before a given second into a window, i.e. a realistic fill price.
 > Note: this live path depends on the pmqb recorder running. If pmqb stops,
 > `ingest_stream` simply finds nothing new; `ingest_chainlink` (Data Streams API)
 > remains an independent source for `BTCUSD_CL`.
+
+`ingest_stream` also stores the two **model probabilities** pmqb computed each
+tick — `pm_quote.p_up_bin` (Binance-fed) and `p_up_chain` (Chainlink-fed) — which
+power the PM Edge strategy below. (`p_up_bin` only exists from ~2026-07-07, when
+pmqb added the Binance-fed model.)
+
+> **DB location:** the store path comes from `MARKET_DB` in `.env` (a shared
+> `…/database/market.db`), and `backend/db.py` now reads `.env` itself — so any
+> module run directly (`python -m backend.data.ingest_stream`, a manual query)
+> hits the same DB the cron and dashboard use, not a stray local `data/market.db`.
+
+## Polymarket full-history order book from PMData (`ingest_pmdata`)
+
+The pmqb capture above only reaches back to the day the bot started. **PMData**
+(`pmdata.dev`) has recorded Polymarket's websocket feeds since **2026-02-13** for
+the BTC 5m series, which extends the Polymarket history by ~4 months *and* adds
+what pmqb never captured: **real order book depth**.
+
+**Loaded as of 2026-07-28** — `2026-02-13 .. 2026-07-27`, 165 contiguous days:
+
+| | |
+|---|---|
+| raw L2 events folded | **6,150,005,504** (~37M/day) |
+| `pm_l2_quote` / `pm_l2_book` rows | **25,825,544** each |
+| `pm_l2_market` windows | **47,201** — 46,217 resolved, 984 undetermined |
+| archive on disk | **67.4 GB** (165 zips, ~200 MB/day in Feb → ~600 MB/day in Jul) |
+| added to `market.db` | **~13.8 GB** (0.56 GB → 14.3 GB) |
+| wall-clock | ~35 min download + **20 min** fold (12 workers) |
+
+```bash
+python3 -m backend.data.ingest_pmdata                  # full history: download + fold
+python3 -m backend.data.ingest_pmdata --from 2026-07-01 --to 2026-07-27
+python3 -m backend.data.ingest_pmdata --download-only   # just fill the archive
+python3 -m backend.data.ingest_pmdata --ingest-only     # fold what is already on disk
+python3 -m backend.data.ingest_pmdata --status          # coverage report, no work
+```
+
+Needs `PMDATA_API_KEY` in `.env`. Two things about the scale drive the whole design:
+
+- **BTC 5m alone is ~37M L2 events a day — 6.15 billion over the full history.**
+  Storing those verbatim would be 500 GB+ and days of write time. So the raw
+  daily `.zip` archives are kept on disk (67.4 GB, under `PMDATA_ARCHIVE`,
+  defaulting beside `market.db`) and SQLite gets the state folded onto a
+  **1-second grid** — a 238x row reduction. The archive is the source of truth:
+  any other resolution can be re-derived from it later without re-downloading.
+- **PMData bills by *day unlocked*, not by request** — and an unlocked day is
+  then free forever, across every series *and* data type. That is exactly why the
+  archives are never re-fetched: rebuilding the tables costs nothing, but
+  re-downloading a day you deleted would cost quota.
+
+Four tables (see `backend/db.py` for the full schema):
+
+- **`pm_l2_quote`** — per `(window, second)`: `bid`/`ask`/`mid`, size resting at
+  the best, and **cumulative depth within 1c/5c/10c** of the best on each side.
+- **`pm_l2_book`** — the **full ladder** for that second, as a zstd-compressed
+  2000-slot `uint32` array (~330 bytes/row). Polymarket quotes a 1c grid but drops
+  to 0.1c in the tails, so the ladder is 0.001-resolution: slot `p` is the bid at
+  `p/1000`, slot `1000+p` the ask, value is `shares*100`.
+- **`pm_l2_market`** — per-window metadata plus the outcome.
+  Deliberately *separate* from `pm_window` so a PMData backfill can never disturb
+  the Chainlink-sourced windows the existing backtests read.
+- **`pmdata_day`** — which archives have been folded in, so re-runs skip them.
+
+**Resolution provenance** (`pm_l2_market.resolved_src`), mirroring `pm_window`'s:
+
+- `'feed'` (**34,682** windows) — the exchange's own `market_resolved` event.
+  Authoritative.
+- `'terminal'` (**11,535**) — derived, because **PMData did not record
+  `market_resolved` before ~2026-03-28**, leaving the first ~6 weeks without a
+  reported outcome. A 5m market's YES price converges to ~1.0 (UP) or ~0.0 (DOWN)
+  as it settles, so the last two-sided quote implies the result. Backtested
+  against the 34,682 windows where the feed *did* report an outcome: the rule
+  decides **92.6%** of them at **99.87% accuracy** (42 wrong out of 32,120;
+  median terminal mid 0.995 for UP, 0.015 for DOWN).
+- `NULL` (**984**, 2.1%) — stayed ambiguous. Left unresolved rather than guessed.
+
+Filter with `WHERE resolved_src='feed'` to use only exchange-reported outcomes.
+`--no-derive` skips the derivation entirely.
+
+Against `pm_window` on the overlapping period, split by *both* sources' provenance:
+
+| PMData L2 | `pm_window` | agreement |
+|---|---|---|
+| `feed` | `chainlink` | **99.80%** (7,014/7,028) |
+| `feed` | `boundary` | 97.41% (3,540/3,634) |
+| `terminal` | `chainlink` | **100%** (27/27) |
+
+Two independent authoritative sources agree to 99.8%. Nearly all of the residual
+sits against `pm_window`'s *derived* `'boundary'` rows — so where the two differ,
+`pm_l2_market.resolved_src='feed'` is the better label.
+
+**Book reconstruction.** A `book` event is a full snapshot; `price_change` sets or
+clears one level. The feed also reports its own best bid/ask on every
+`price_change`, and those are used *verbatim* for the quoted prices — so the
+top-of-book columns never depend on replay being perfect. Full snapshots arrive
+~3.4x/second, so the replayed depth resyncs continuously rather than drifting.
+
+The fold is vectorised (numpy ladder, one fancy-indexed assignment per second)
+because the obvious per-event Python loop runs at ~6.7 µs/event — about 12 CPU-hours
+over the full history. Vectorised it is **~18x faster** (~150 ms/market), which is
+what makes a 6.15-billion-event backfill a 20-minute job on 12 workers. It was
+validated against that plain reference replay: **0 ladder and 0 top-of-book
+mismatches** over ~3,000 second-rows.
+
+**Cross-check against the independent pmqb capture** — the two share 2,875,992
+seconds of overlap, recorded by different machines from different feeds:
+
+| check | result |
+|---|---|
+| mean \|PMData bid − pmqb `yes_bid`\| | **0.0072** (under one 1c tick) |
+| mean *signed* bid / ask difference | **+0.00000 / +0.00001** (no bias) |
+| exact tick match | 69.7% |
+
+The residual is sampling phase, not error: this grid takes end-of-second state
+while pmqb sampled whenever its tick landed. The resolution agreement above is
+also what confirms the archived book is the **YES(UP)** side, matching
+`pm_quote`'s convention.
+
+A verification pass over the loaded data confirms: `bid<=0`, `ask>=1`, and
+depth-monotonicity violations (`sz<=d1<=d5<=d10`) are all **0**; prices span
+exactly 0.001–0.999; and on sampled second-rows the size quoted at the best
+always equals what the ladder holds at that price (**0 mismatches**).
+
+**Caveats worth knowing:**
+
+- **Prices are snapped to the 0.001 grid.** ~8% of feed values arrive with float
+  noise (`0.501` as `0.5009998095600838`), which would break `WHERE bid = 0.501`
+  and disagree with the ladder's own slotting. The correction is ~2e-7, far below
+  a tick.
+- **`bid`/`ask` are the feed's own reported best**, not the top of the replayed
+  ladder. They disagree ~1% of the time because the exchange batches updates; the
+  feed's value is the one that was actually quoted, so it wins.
+- **A small number of rows are one-sided** (5.7% have no bid, 5.8% no ask) —
+  normal once a market is effectively decided. `bid`/`ask` are NULL there, never 0.
+- **`bid >= ask` on 356 rows (0.0014%)** — momentarily crossed in the feed's own
+  batched updates. Kept as-is rather than smoothed over.
+- **PMData has its own recording gaps.** Every calendar day 2026-02-13..07-27 is
+  present, but 9 of them hold fewer than the full 288 windows — 2026-02-13 (84,
+  recording began 17:00 UTC), 03-23 (190), 06-17 (282), 06-06 (285), 02-26 /
+  04-15 / 04-16 (286), 06-20 / 07-12 (287). Total 47,201 of a possible 47,376
+  (99.6%). Re-check with `SELECT data_date, COUNT(*) FROM pm_l2_market GROUP BY
+  data_date HAVING COUNT(*) != 288`.
+
+Read it back with `backend/pm_store.py`: `l2_coverage()`, `l2_quotes(start_ts)`,
+`l2_quote_at(start_ts, elapsed)`, `l2_book_at(start_ts, elapsed)` (full ladder as
+best-first `(price, shares)` lists), and `l2_fill(start_ts, elapsed, shares, side)`
+— which **walks the resting book** to price a market order of a given size. That
+last one is the point of storing depth: a large order does not fill at the top of
+book, and past the best level these markets are often thin.
+
+Daily upkeep runs from the same `run_updaters.sh`. PMData publishes an archive only
+once a day has closed, so this job is daily rather than per-minute and is a no-op
+when there is nothing new:
+
+```cron
+40 1 * * *   <proj>/run_updaters.sh pmdata >> <proj>/data/pmdata_ingest.log 2>&1
+```
+
+> Cost: `pm_l2_quote` + `pm_l2_book` add **~13.8 GB** to `market.db` (~84 MB/day),
+> roughly 75% of it the ladder blobs. Pass `--no-ladder` to keep only the
+> top-of-book + depth-bucket table (~21 MB/day) if that footprint matters; the
+> ladder can be folded in later from the archive without spending quota.
 
 ## Using the dashboard
 

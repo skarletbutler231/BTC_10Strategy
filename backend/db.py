@@ -19,9 +19,43 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "market.db"
 
 
+def dotenv_value(key: str) -> "str | None":
+    """Read one key from the repo-root .env (best effort).
+
+    Without this, a module run directly (e.g. `python -m backend.data.ingest_stream`,
+    or a manual query) would NOT see MARKET_DB — which only lives in .env — and would
+    silently target the local ``data/market.db`` instead of the configured shared DB.
+    Loading it here makes db_path() correct however the code is invoked. Other
+    settings that only live in .env (PMDATA_API_KEY, PMDATA_ARCHIVE) read through
+    the same helper.
+    """
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return None
+    try:
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, val = line.partition("=")
+            if k.strip() == key:
+                return val.split("#", 1)[0].strip().strip('"').strip("'")
+    except OSError:
+        return None
+    return None
+
+
+def env_value(key: str) -> "str | None":
+    """``key`` from the real environment, falling back to the repo-root .env."""
+    return os.environ.get(key) or dotenv_value(key)
+
+
 def db_path() -> Path:
-    """Resolved path to the SQLite file (honours the MARKET_DB env var)."""
-    env = os.environ.get("MARKET_DB")
+    """Resolved path to the SQLite file.
+
+    Precedence: MARKET_DB in the environment > MARKET_DB in .env > the local default.
+    """
+    env = env_value("MARKET_DB")
     return Path(env).expanduser() if env else DEFAULT_DB_PATH
 
 
@@ -94,6 +128,84 @@ CREATE TABLE IF NOT EXISTS cl_partial (
     open    REAL, high REAL, low REAL, close REAL,
     last_ts INTEGER NOT NULL       -- newest tick folded into this minute
 );
+
+-- ============================================================================
+-- PMData (api.pmdata.dev) full-history Polymarket L2 order book, folded to a
+-- 1-second grid by ``backend.data.ingest_pmdata``. The raw daily archives are
+-- ~30M events/day, so SQLite holds the per-second state and the untouched
+-- .zip archives on disk stay the re-ingestable source of truth.
+--
+-- Complements pm_quote (the pmqb live capture): pm_quote is this machine's own
+-- tick capture with the model's p_up attached and only reaches back to the day
+-- the bot started; pm_l2_* reaches back to PMData's 2026-02-13 recording start
+-- and carries real book depth. Both key on the same 5m ``start_ts`` grid.
+
+-- Top of book + cumulative depth, one row per (5m window, second).
+CREATE TABLE IF NOT EXISTS pm_l2_quote (
+    start_ts INTEGER NOT NULL,   -- window this second belongs to (-> pm_window)
+    time     INTEGER NOT NULL,   -- unix SECONDS (UTC), exchange event time
+    bid      REAL,               -- best bid, as reported by the feed
+    ask      REAL,               -- best ask, as reported by the feed
+    mid      REAL,               -- (bid+ask)/2 when both sides are present
+    bid_sz   REAL,               -- resting size at the best bid (shares)
+    ask_sz   REAL,
+    bid_d1   REAL,               -- cumulative bid size within 1c of the best bid
+    ask_d1   REAL,
+    bid_d5   REAL,               -- ... within 5c
+    ask_d5   REAL,
+    bid_d10  REAL,               -- ... within 10c
+    ask_d10  REAL,
+    n_events INTEGER NOT NULL,   -- L2 events folded into this second
+    PRIMARY KEY (start_ts, time)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_pm_l2_quote_time ON pm_l2_quote(time);
+
+-- Full ladder for the same 1-second grid. `ladder` is a zstd-compressed array
+-- of 2000 little-endian uint32: index p in [0,1000) is the bid resting at price
+-- p/1000, index 1000+p the ask at p/1000; the value is shares*100 (Polymarket
+-- sizes carry at most 2dp). Polymarket quotes a 1c grid but drops to 0.1c in
+-- the tails, so the ladder is 0.001-resolution. Decode with
+-- ``backend.pm_store.decode_ladder``. A rowid table on purpose: ~330-byte blobs
+-- are well past the size where WITHOUT ROWID stops paying off.
+CREATE TABLE IF NOT EXISTS pm_l2_book (
+    start_ts INTEGER NOT NULL,
+    time     INTEGER NOT NULL,
+    ladder   BLOB NOT NULL,
+    UNIQUE (start_ts, time)
+);
+
+-- One row per PMData market file (i.e. per 5m window), with the feed's own
+-- resolution. Kept separate from pm_window so a PMData backfill never disturbs
+-- the Chainlink-sourced windows the existing backtests read.
+CREATE TABLE IF NOT EXISTS pm_l2_market (
+    start_ts   INTEGER PRIMARY KEY,   -- window open, unix SECONDS (5m grid)
+    slug       TEXT NOT NULL,         -- 'btc-updown-5m-<start_ts>'
+    first_ts   INTEGER,               -- first/last event time in the file
+    last_ts    INTEGER,
+    n_events   INTEGER,
+    n_book     INTEGER,               -- full-snapshot events (ladder resyncs)
+    n_change   INTEGER,               -- price_change events
+    outcome    TEXT,                  -- feed's winning_outcome: 'yes' | 'no' | NULL
+    resolved_up INTEGER,              -- 1 if UP, 0 if DOWN, NULL if undetermined
+    resolved_src TEXT,                -- 'feed' (market_resolved event, authoritative)
+                                      -- | 'terminal' (derived from the settled book)
+    data_date  TEXT                   -- PMData archive day this came from
+) WITHOUT ROWID;
+
+-- Which PMData daily archives have been downloaded and folded in, so a re-run
+-- skips them. PMData bills by *day unlocked* (shared across series and data
+-- type), which is why the archives are kept rather than re-fetched.
+CREATE TABLE IF NOT EXISTS pmdata_day (
+    series    TEXT NOT NULL,          -- 'btc-5m'
+    data_type TEXT NOT NULL,          -- 'poly_l2'
+    data_date TEXT NOT NULL,          -- 'YYYY-MM-DD'
+    markets   INTEGER,
+    events    INTEGER,
+    sec_rows  INTEGER,
+    zip_bytes INTEGER,
+    loaded_at INTEGER NOT NULL,       -- unix seconds
+    PRIMARY KEY (series, data_type, data_date)
+);
 """
 
 
@@ -121,7 +233,24 @@ def connect(path: "str | Path | None" = None, *, readonly: bool = False) -> sqli
     conn.execute("PRAGMA cache_size=-65536")  # ~64 MB page cache
     if not readonly:
         conn.executescript(_SCHEMA)
+        _migrate(conn)
     return conn
+
+
+# Columns added to tables that already exist in a deployed DB. CREATE TABLE IF
+# NOT EXISTS silently leaves an older table alone, so each addition needs an
+# explicit, idempotent ALTER here.
+_ADDED_COLUMNS = (
+    ("pm_l2_market", "resolved_src", "TEXT"),
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in _ADDED_COLUMNS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if cols and column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    conn.commit()
 
 
 def init_db(path: "str | Path | None" = None) -> Path:
