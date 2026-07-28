@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PM Edge — Polymarket market-vs-model</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/lightweight-charts.js"></script>
+  <style>
+    .pm-wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .pm-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
+    .pm-controls label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 3px; }
+    .pm-controls input, .pm-controls select { min-width: 90px; }
+    .note { font-size: 12px; color: var(--muted); margin: 2px 0 14px; }
+    .equity-wrap { height: 340px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-top: 12px; }
+    #equity { width: 100%; height: 100%; }
+    .stat .sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">◪ <strong>PM Edge</strong> <span class="muted">market vs model · Polymarket 5m</span></div>
+    <div class="top-controls"><a href="/" class="ghost" style="text-decoration:none;padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)">← Candle strategies</a></div>
+  </header>
+
+  <div class="pm-wrap">
+    <p class="note">
+      Bet the disagreement between the Polymarket <b>YES</b> price and a
+      price-displacement model. In the entry band, take the first tick where
+      |model − market| ≥ δ, follow the model, hold to Chainlink settlement.
+      Default is the sweep-selected optimum: <b>Binance · follow · 120–180s · δ0.12</b>.
+    </p>
+
+    <div class="pm-controls">
+      <label>Model
+        <select id="model"><option value="binance">Binance</option><option value="chainlink">Chainlink</option></select>
+      </label>
+      <label>Direction
+        <select id="direction"><option value="follow">Follow</option><option value="fade">Fade</option></select>
+      </label>
+      <label>Entry from (s)<input id="entry_from" type="number" value="120" min="0" max="299" /></label>
+      <label>Entry to (s)<input id="entry_to" type="number" value="180" min="1" max="300" /></label>
+      <label>Delta (edge)<input id="delta" type="number" value="0.12" step="0.01" min="0" max="0.5" /></label>
+      <label>Fee (winnings)<input id="fee" type="number" value="0.04" step="0.01" min="0" max="0.2" /></label>
+      <label>Price
+        <select id="price"><option value="exec">Executable</option><option value="mid">Mid</option></select>
+      </label>
+      <label>Start<input id="start" type="date" /></label>
+      <label>End<input id="end" type="date" /></label>
+      <button id="run" class="primary">Run</button>
+    </div>
+
+    <div id="status" class="status muted">Loading…</div>
+    <div id="stats" class="stats"></div>
+    <div class="equity-wrap"><div id="equity"></div></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let chart, line;
+
+    function initChart() {
+      const el = $('equity');
+      chart = LightweightCharts.createChart(el, {
+        layout: { background: { color: '#161b22' }, textColor: '#9aa5b1' },
+        grid: { vertLines: { color: '#1b222c' }, horzLines: { color: '#1b222c' } },
+        rightPriceScale: { borderColor: '#2a323d' },
+        timeScale: { borderColor: '#2a323d', timeVisible: false },
+      });
+      line = chart.addLineSeries({ color: '#4c8dff', lineWidth: 2, priceLineVisible: false });
+      new ResizeObserver(() => chart.resize(el.clientWidth, el.clientHeight)).observe(el);
+    }
+
+    function card(k, v, sub, cls = '') {
+      return `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${v}</div>` +
+             (sub ? `<div class="sub">${sub}</div>` : '') + `</div>`;
+    }
+
+    function render(d) {
+      const s = d.stats;
+      const sign = (x) => (x > 0 ? 'pos' : x < 0 ? 'neg' : '');
+      $('stats').innerHTML = [
+        card('Bets', s.bets),
+        card('Hit rate', `${s.hit_rate}%`, `breakeven ${s.breakeven}%`, s.hit_rate >= s.breakeven ? 'pos' : 'neg'),
+        card('EV / bet', `${s.ev_per_bet >= 0 ? '+' : ''}${s.ev_per_bet}`, 'per $1 stake', sign(s.ev_per_bet)),
+        card('Total P/L', `${s.total_pnl >= 0 ? '+' : ''}${s.total_pnl}`, `ROI ${s.roi_pct}%`, sign(s.total_pnl)),
+        card('Avg odds', s.avg_odds),
+        card('UP / DOWN', `${s.up_bets} / ${s.down_bets}`),
+        card('Max DD', s.max_drawdown, '', s.max_drawdown < 0 ? 'neg' : ''),
+      ].join('');
+      line.setData((d.equity || []).map((p) => ({ time: p.time, value: p.value })));
+      chart.timeScale().fitContent();
+      const c = d.config;
+      $('status').className = 'status muted';
+      $('status').textContent =
+        `${c.model}/${c.direction} · ${c.entry_from}-${c.entry_to}s · δ${c.delta} · fee ${(c.fee*100).toFixed(0)}% · ` +
+        `${s.bets} bets · ${s.hit_rate}% hit (breakeven ${s.breakeven}%) · ${s.total_pnl >= 0 ? '+' : ''}${s.total_pnl} P/L`;
+    }
+
+    async function run() {
+      const p = new URLSearchParams({
+        model: $('model').value, direction: $('direction').value,
+        entry_from: $('entry_from').value, entry_to: $('entry_to').value,
+        delta: $('delta').value, fee: $('fee').value, price: $('price').value,
+        start: $('start').value, end: $('end').value,
+      });
+      $('status').className = 'status busy'; $('status').textContent = 'Running…';
+      $('run').disabled = true;
+      try {
+        const r = await fetch('/api/pm_edge?' + p.toString());
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || r.statusText);
+        render(d);
+      } catch (e) {
+        $('status').className = 'status error'; $('status').textContent = 'Error: ' + e.message;
+      } finally { $('run').disabled = false; }
+    }
+
+    initChart();
+    $('run').onclick = run;
+    run();  // run defaults on load
+  </script>
+</body>
+</html>

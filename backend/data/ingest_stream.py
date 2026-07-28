@@ -136,8 +136,9 @@ def run(*, source: str | None = None, reset: bool = False, db_path=None) -> dict
             nonlocal quote_buf, n_quotes
             if quote_buf:
                 conn.executemany(
-                    "INSERT OR IGNORE INTO pm_quote (start_ts, time, yes, yes_bid, yes_ask) "
-                    "VALUES (?,?,?,?,?)", quote_buf)
+                    "INSERT OR IGNORE INTO pm_quote "
+                    "(start_ts, time, yes, yes_bid, yes_ask, p_up_bin, p_up_chain) "
+                    "VALUES (?,?,?,?,?,?,?)", quote_buf)
                 n_quotes += len(quote_buf)
                 quote_buf = []
 
@@ -184,8 +185,11 @@ def run(*, source: str | None = None, reset: bool = False, db_path=None) -> dict
                                       slug, float(sp) if sp is not None else None)
                     yes = r.get("yes")
                     if yes is not None:
+                        pub = (r.get("predictionBinance") or {}).get("pUp")
+                        puc = (r.get("prediction") or {}).get("pUp")
                         quote_buf.append((st, tsec, float(yes),
-                                          _f(r.get("yesBid")), _f(r.get("yesAsk"))))
+                                          _f(r.get("yesBid")), _f(r.get("yesAsk")),
+                                          _f(pub), _f(puc)))
                         if len(quote_buf) >= QUOTE_FLUSH:
                             flush_quotes()
                 else:  # outcome (chainlink)

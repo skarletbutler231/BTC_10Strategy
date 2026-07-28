@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS pm_quote (
     yes      REAL,               -- YES(UP) mid price in [0,1]
     yes_bid  REAL,
     yes_ask  REAL,
+    p_up_bin   REAL,             -- Binance-fed model P(up) at this tick (predictionBinance.pUp)
+    p_up_chain REAL,             -- Chainlink-fed model P(up) at this tick (prediction.pUp)
     PRIMARY KEY (start_ts, time)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS ix_pm_quote_time ON pm_quote(time);

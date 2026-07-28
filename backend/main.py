@@ -17,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import binance
+from . import db
+from . import pm_edge
 from . import polymarket
 from . import registry
 from . import store
@@ -186,11 +188,53 @@ def backtest(req: BacktestRequest):
     }
 
 
+@app.get("/api/pm_edge")
+def pm_edge_backtest(
+    model: str = "binance", direction: str = "follow",
+    entry_from: int = 120, entry_to: int = 180,
+    delta: float = 0.12, fee: float = 0.04, price: str = "exec",
+    start: str = "", end: str = "",
+):
+    """PM Edge (market-vs-model divergence) backtest over the Polymarket record."""
+    lo, hi = pm_edge_coverage_bounds()
+    if lo is None:
+        raise HTTPException(404, "no resolved Polymarket windows — run ingest_stream")
+    start_ts = (_to_ms(start) // 1000) if start else lo
+    end_ts = (_to_ms(end, end=True) // 1000) if end else hi
+    try:
+        cfg = pm_edge.PMEdgeConfig(
+            model=model, direction=direction, entry_from=entry_from,
+            entry_to=entry_to, delta=delta, fee=fee, price=price)
+        res = pm_edge.run(start_ts, end_ts, cfg)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"config": res["config"], "stats": res["stats"],
+            "equity": res["equity"], "coverage": {"from": lo, "to": hi},
+            "range": {"from": start_ts, "to": end_ts}}
+
+
+def pm_edge_coverage_bounds():
+    conn = db.connect(readonly=True)
+    try:
+        r = conn.execute("SELECT MIN(start_ts) lo, MAX(start_ts) hi FROM pm_window "
+                         "WHERE resolved_up IS NOT NULL").fetchone()
+        return (r["lo"], r["hi"]) if r else (None, None)
+    except Exception:  # noqa: BLE001 - pm tables not built yet
+        return (None, None)
+    finally:
+        conn.close()
+
+
 # ---- static frontend --------------------------------------------------------
 
 @app.get("/")
 def index():
     return FileResponse(FRONTEND / "index.html")
+
+
+@app.get("/pm-edge")
+def pm_edge_page():
+    return FileResponse(FRONTEND / "pm_edge.html")
 
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND)), name="static")

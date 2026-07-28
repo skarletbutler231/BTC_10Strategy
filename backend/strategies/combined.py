@@ -38,7 +38,7 @@ from .base import Param, ParamGroup, Signal, Strategy
 # simply not offered as a voter (and this strategy never votes for itself).
 SUB_IDS = ["rsi_bb", "stoch_wick", "atr_devexh", "bb_squeeze", "zscore_ms",
            "regime_switch", "volume_exhaustion", "jump_exhaustion",
-           "cci_williams", "multi_horizon"]
+           "cci_williams", "multi_horizon", "fair_value_gap"]
 
 DEFAULT_PRESET = "— defaults —"
 

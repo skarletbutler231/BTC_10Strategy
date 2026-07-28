@@ -338,6 +338,47 @@ when there is nothing new:
 > top-of-book + depth-bucket table (~21 MB/day) if that footprint matters; the
 > ladder can be folded in later from the archive without spending quota.
 
+## PM Edge — Polymarket market-vs-model strategy
+
+A **Polymarket-native** strategy (not a candle strategy): it trades the 5-minute
+UP/DOWN market on the disagreement between the market's YES price and a
+price-displacement model. Per window, in an entry band it takes the first tick
+where `|model_pUp − yes| ≥ δ`, **follows** the model (bet UP if the model is above
+the market, else DOWN), enters at the executable book price (YES at ask / NO at
+1−bid), and holds to Chainlink settlement.
+
+```bash
+python3 -m backend.data.pm_edge_backtest                       # defaults, full history
+python3 -m backend.data.pm_edge_backtest --from 2026-07-07 --delta 0.10
+python3 -m backend.data.pm_edge_backtest --model chainlink --entry-from 180 --entry-to 210
+# or open the dashboard page:  http://localhost:$PORT/pm-edge
+```
+
+**Findings (full Polymarket record; Binance model spans ~20 days from 07-07):**
+
+- **Follow, not fade.** Betting *with* the model beats betting with the market
+  against it at every threshold (fade is −0.05 to −0.09/bet). The model leads.
+- **Entry timing matters and was swept.** The edge lives in the **middle** of the
+  window; the last ~90 s is a graveyard (270–295 s ≈ −0.10/bet on both models —
+  near the boundary you'd *fade*, not follow), and the first ~60 s is weak.
+  - **Binance model peaks at 120–180 s** (the default).
+  - **Chainlink model peaks ~60 s later, at 180–210 s** — consistent with
+    Chainlink lagging Binance ~2 s — and is the documented fallback if the
+    Binance model feed is unavailable.
+- **Best config: Binance · follow · 120–180 s · δ0.12.** ~3,000 bets, ~45% hit
+  vs ~43% breakeven, **EV ≈ +0.07 per $1 stake net of a 4% winnings fee**
+  (+0.094 gross), ROI ≈ +7% on stake turned over. It stays positive even at an
+  8% fee.
+- **Mechanism:** the winning bets sit on the *cheaper* side (avg odds ~0.43) at a
+  ~45% hit rate — a model-selection / favorite-longshot edge, not a coin-flip
+  improvement.
+
+**Caveats:** ~20 days / ~3k bets is a short, single-regime sample; entries assume
+you fill at the observed ask (thin longshot books slip on size); and pmqb's own
+notes flag a ~1–2 s model-vs-market lag, so live latency is the main risk to the
+paper edge. Config lives in `backend/pm_edge.py` (`PMEdgeConfig`); the sweep
+scripts that produced these numbers are research artifacts, not in the repo.
+
 ## Using the dashboard
 
 1. Pick a **strategy**, **symbol** (default `BTCUSDT`), **interval**, and a
