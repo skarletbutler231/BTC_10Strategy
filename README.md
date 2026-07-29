@@ -8,8 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**All ten of the video's strategies are implemented**, plus **Fib Retracement**
-as an addition beyond them.
+**All ten of the video's strategies are implemented**, plus **Fair Value Gap**,
+**Fib Retracement** and **Candlesticks** as additions beyond them.
 
 ---
 
@@ -49,6 +49,7 @@ linked sections document how each was fitted and what it is worth.
 | 9 | [CCI Williams](#cci-williams-strategy-9) | Two oscillators must agree on exhaustion |
 | 10 | [Multi Horizon](#multi-horizon-strategy-10) | Z-score agreement across three timeframes — **strongest here** |
 | + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
+| + | [Candlesticks](#candlesticks-beyond-the-video) | Nine classic patterns, each written as a formula |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -656,6 +657,130 @@ stability did not predict survival**: configs scoring 63.7% and 66.4% on the two
 halves of the training span still collapsed to 50.0% on 2024-26. Only the real
 holdout separated these tiers — which is the argument for keeping one.
 
+## Candlesticks (beyond the video)
+
+*The classic Japanese patterns, written as formulas.* A hammer, an engulfing
+bar, a morning star — each is a claim about who won the bar, read as either a
+reversal or a continuation. The usual problem is that "that's a hammer" is a
+judgement call, so all nine families here are **formulas over OHLC** with the
+fuzzy parts (how big is a strong body, how long is a long wick) exposed as
+parameters a sweep can turn.
+
+| Group | Params |
+|-------|--------|
+| **Patterns** | `pat_engulfing` ☑, `pat_hammer` ☑, `pat_harami`, `pat_piercing`, `pat_star`, `pat_doji`, `pat_tweezer`, `pat_marubozu`, `pat_soldiers` |
+| **Pattern Geometry** | `body_strong_min`, `body_small_max`, `doji_body_max`, `pin_wick_min`, `pin_opp_wick_max`, `marubozu_body_min`, `tweezer_tol_atr`, `engulf_mode` (Body ⋁ Body+Wick), `min_range_atr` |
+| **Prior Move** | `require_prior_move` ☑, `prior_move_logic` (Textbook ⋁ Extension ⋁ Reversal), `prior_move_bars`, `prior_move_atr` |
+| **Volatility Filter** | `vol_atr_length` (also sizes TP/SL), `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
+| **Decision** | `predict_direction` (Pattern ⋁ Fade) |
+| **Day of Week (UTC)** | `trade_mon` … `trade_sun` ☑ |
+
+**One structural adaptation, and it matters.** The textbook piercing line, dark
+cloud cover and star patterns all require a *gap* — the next session opening
+away from the last close. Crypto trades 24/7, so `open[i] == close[i-1]` almost
+exactly on every 5m bar and a strict gap test would make those patterns fire
+essentially never. Every gap condition is relaxed to a **touch** condition. What
+survives of those three is their body geometry, not the gap.
+
+Patterns that disagree on the same bar discard it rather than being
+majority-voted, the same rule the Combined strategy uses for its voters.
+
+### The textbook reading is backwards
+
+Each family was tested in both prior-move contexts — the classical **reversal**
+reading (the pattern contradicts the move into it) and the **extension** reading
+(the pattern caps a move already under way) — betting *against the prior move*
+in both cases, so the two are directly comparable. Train hit rate, prior move
+≥ 1.0×ATR over 12 bars, against a 52.18% control:
+
+| Family | Reversal ctx | Extension ctx |
+|--------|-------------:|--------------:|
+| Three soldiers / crows | 43.00% (614) | **58.21%** (2,723) |
+| Marubozu | 45.83% (12,319) | **56.94%** (10,524) |
+| Morning / evening star | 48.02% (2,353) | **56.87%** (932) |
+| Engulfing | 48.68% (26,659) | **55.14%** (16,959) |
+| Piercing / dark cloud | 49.51% (8,738) | 53.62% (3,264) |
+| Hammer / shooting star | 53.21% (25,835) | 53.10% (22,574) |
+| Harami | 51.47% (33,216) | 52.38% (12,701) |
+| Tweezer | 50.45% (24,014) | 52.05% (13,880) |
+| Doji | 53.13% (34,367) | *undefined* |
+
+The classical reversal reading sits at or **below** the control for six of the
+nine families, and collapses for the two that are supposed to be most decisive:
+three white soldiers after a decline is 43.00%, a marubozu against the move
+45.83%. The extension reading beats the control for all eight families where it
+is defined. Only the two wick families — hammer and doji — earn anything in the
+direction the textbook says, and they earn about a point.
+
+Put plainly: **a bullish engulfing bar is not a bottom.** It is a big green
+candle, and a big green candle at the end of a rally is a good thing to sell.
+`prior_move_logic` exists so this is a setting rather than an assumption.
+
+### …but most of the edge is the context, not the shape
+
+Every winning configuration bets against the immediately preceding move, so the
+shapes were tested against a tight matched control: same prior-move gate, same
+bar-range floor, same volatility band, fading the bar's own direction — with
+**no body-ratio requirement**, so any bar extending the move qualifies.
+
+| Preset config | Control bets | Control hit | Preset bets | Preset hit | Gap vs disjoint remainder |
+|---|---:|---:|---:|---:|---:|
+| 6b / 1.0×ATR / rng 0.5 | 184,532 | 55.16% | 36,079 | 56.99% | +2.27pp (z=+7.8) |
+| 6b / 1.5×ATR / rng 1.0 | 60,246 | 56.74% | 13,501 | 58.41% | +2.15pp (z=+4.4) |
+| 12b / 2.0×ATR / rng 1.5 | 24,118 | 57.12% | 5,279 | 58.97% | +2.37pp (z=+3.1) |
+
+The geometry is real and statistically solid — and it is roughly **a fifth of
+the story**. The other four fifths is *"fade a decisive bar that extends a
+move"*, which needs no pattern vocabulary at all. If you want the effect without
+the taxonomy, the control is simpler and carries 5× the volume at 1–2pp less.
+
+### Polymarket presets
+
+Five sweep stages, ~3,000 combinations, whole DB (939,434 5m bars, 2017-08 →
+2026-07). Parameters chosen on **2017-2023 only**.
+
+| Preset | Bets | Hit | Train 17-23 | TEST 24-26 | 2025-26 | Worst yr | z |
+|--------|-----:|----:|------------:|-----------:|--------:|---------:|--:|
+| **PM 5m Balanced** | 13,501 | 58.41% | 60.61% | **55.48%** | 55.44% | 47.47% (2017) | 19.5 |
+| PM 5m Volume | 36,079 | 56.99% | 58.67% | 54.59% | 54.32% | 48.33% (2017) | **26.5** |
+| PM 5m Selective | 5,279 | 58.97% | 61.65% | 55.57% | 54.94% | 52.79% (2017) | 13.0 |
+| PM 5m Hi Hit | 1,472 | 59.78% | 63.23% | 55.17% | 56.38% | 48.98% (2017) | 7.5 |
+
+***Balanced is the preset to use.*** All four survive the holdout and land
+within 1pp of each other there (54.59 / 55.48 / 55.57 / 55.17%), so the tier
+carrying the most bets at the top of that band wins on evidence rather than on
+headline number: 5,793 out-of-sample bets at 55.48%, and every year from 2018 on
+at or above 55.0%.
+
+Findings beyond the numbers:
+
+- **Fade, always.** No configuration of any family beat 50% betting the
+  pattern's own direction once the context gate pointed the right way. The
+  fifth strategy in this repo to land on mean reversion.
+- **The trend filter and volatility band earn nothing here.** Across 225 filter
+  combinations "Against SMA50" beat filter-off by 0.0–0.2pp and the ATR% band by
+  ~0.3pp — inside noise at every volume. Both ship off/wide, unlike Fib
+  Retracement and Volume Exhaustion where *Against Trend* paid.
+- **A big bar matters more than a pretty one.** `min_range_atr` is the most
+  valuable geometry knob — 0.0 → 1.5×ATR adds 3–4pp across every family — while
+  `marubozu_body_min` anywhere in 0.75–0.90 barely separates (61.0–61.9%).
+- **Body-only engulfment beats whole-range**: `Body+Wick` appears nowhere in the
+  top 20 of its 288-combination grid.
+- **No weekend gate.** The premium is +0.27 / +1.28 / +0.59 / +7.46pp across the
+  four tiers; only Hi Hit's is nominally significant (z=+2.69), on 424 weekend
+  bets — one result out of four comparisons.
+
+⚠️ **Caveats.** **Shrinkage scales with training hit rate, again** — ranked by
+train hit the tiers lose 4.1 / 5.1 / 6.1 / 8.1 points out-of-sample, in exactly
+that order, repeating what Fib Retracement showed. **Every worst year is 2017**,
+a partial year and the most relentlessly trending stretch in the record — a
+parabolic trend is this strategy's failure mode and it will recur. **The edge
+decays**: every tier's 2026 sits below its 2018-2023 average. And the holdout was
+displayed during stage 2 before being switched off for stages 3-5, where the
+shapes and filters were actually chosen — so treat 2024-2026 as a very good
+shrinkage estimate rather than a perfectly blind one.
+
 ## Volume Exhaustion (strategy #7)
 
 *Fade the climax bar.* A decisive bar printed on abnormally heavy volume is often
@@ -977,8 +1102,9 @@ treat it as suggestive. Days are UTC.
 That's it — it appears in the dropdown and its params render automatically. Params
 support four `kind`s — `int`, `float`, `bool` (checkbox), and `enum` (dropdown,
 via `options=[…]`) — so a strategy can expose toggles and choices, not just
-numbers. All ten of the video's strategies are implemented; `Fib Retracement` is
-an addition beyond them, held to the same evidence bar.
+numbers. All ten of the video's strategies are implemented; `Fair Value Gap`,
+`Fib Retracement` and `Candlesticks` are additions beyond them, held to the same
+evidence bar.
 
 ## Layout
 
@@ -1007,6 +1133,7 @@ backend/
     volume_exhaustion.py
     multi_horizon.py
     fib_retracement.py   beyond the video: swing-leg Fibonacci retracement
+    candlesticks.py      beyond the video: nine candlestick pattern families
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)

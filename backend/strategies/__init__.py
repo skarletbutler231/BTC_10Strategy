@@ -1,14 +1,16 @@
 """Strategy package: import each strategy module and register its instance.
 
 This is the ONLY place you touch to enable a new strategy in the dashboard.
-All ten of the video's strategies are implemented, plus Fair Value Gap and Fib
-Retracement (additions beyond the video). Filters shared between strategies
-(trading window, trend filter, MA/source helpers) live in common.py.
+All ten of the video's strategies are implemented, plus Fair Value Gap, Fib
+Retracement and Candlesticks (additions beyond the video). Filters shared
+between strategies (trading window, trend filter, MA/source helpers) live in
+common.py.
 """
 
 from ..registry import register
 from .atr_devexh import AtrDevExh
 from .bb_squeeze import BBSqueeze
+from .candlesticks import Candlesticks
 from .cci_williams import CCIWilliams
 from .combined import Combined
 from .fair_value_gap import FairValueGap
@@ -37,6 +39,7 @@ register(MultiHorizon())
 # framework and held to the same evidence bar.
 register(FairValueGap())
 register(FibRetracement())
+register(Candlesticks())
 
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
@@ -56,3 +59,4 @@ register(Combined())
 # --- Additions beyond the video ----------------------------------------------
 #      Fair Value Gap     (fair_value_gap.py)     <-- DONE
 #      Fib Retracement    (fib_retracement.py)    <-- DONE
+#      Candlesticks       (candlesticks.py)       <-- DONE
