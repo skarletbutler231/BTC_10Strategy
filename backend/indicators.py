@@ -332,6 +332,36 @@ def rolling_swing(candles: list[dict], window: int):
     return hh, ll, hi_i, lo_i
 
 
+def pivots(candles: list[dict], left: int, right: int):
+    """Fractal swing pivots -> (pivot_high, pivot_low), index-aligned.
+
+    ``pivot_high[j]`` is ``high[j]`` when that high is the highest of the window
+    ``[j-left, j+right]``, else None; ``pivot_low[j]`` mirrors it on lows. Ties
+    are inclusive, so a flat plateau marks every bar in it as a pivot.
+
+    LOOK-AHEAD WARNING: a pivot at bar j depends on the `right` bars that come
+    AFTER it, so it is not knowable until bar ``j + right``. Callers must not
+    read ``pivot_*[j]`` while scanning any bar earlier than ``j + right`` — see
+    the confirmation cursor in strategies/reversal.py for the pattern that
+    enforces this.
+    """
+    n = len(candles)
+    ph: List[Num] = [None] * n
+    pl: List[Num] = [None] * n
+    if left < 0 or right < 0:
+        return ph, pl
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    for j in range(left, n - right):
+        lo_b, hi_b = j - left, j + right + 1
+        h, l = highs[j], lows[j]
+        if all(highs[k] <= h for k in range(lo_b, hi_b)):
+            ph[j] = h
+        if all(lows[k] >= l for k in range(lo_b, hi_b)):
+            pl[j] = l
+    return ph, pl
+
+
 def adx(candles: list[dict], period: int) -> List[Num]:
     """Wilder's ADX (0-100) — trend STRENGTH, direction-agnostic.
 
@@ -520,6 +550,33 @@ def stochastic(candles: list[dict], k_length: int, d_length: int):
             continue
         d[i] = sum(window) / d_length
     return k, d
+
+
+def macd(values: List[float], fast: int, slow: int, signal: int):
+    """MACD -> (macd_line, signal_line, histogram), each index-aligned.
+
+    macd = EMA(fast) - EMA(slow); signal = EMA(macd, signal); hist = macd-signal.
+    The signal EMA is seeded from the first bar where the MACD line is defined,
+    so it warms up off real values rather than treating the None prefix as data.
+    """
+    n = len(values)
+    line: List[Num] = [None] * n
+    sig: List[Num] = [None] * n
+    hist: List[Num] = [None] * n
+    ef, es = ema(values, fast), ema(values, slow)
+    for i in range(n):
+        a, b = ef[i], es[i]
+        if a is not None and b is not None:
+            line[i] = a - b
+
+    start = next((i for i, v in enumerate(line) if v is not None), n)
+    if start < n:
+        for k, v in enumerate(ema([float(x) for x in line[start:]], signal)):
+            sig[start + k] = v
+    for i in range(n):
+        if line[i] is not None and sig[i] is not None:
+            hist[i] = line[i] - sig[i]
+    return line, sig, hist
 
 
 def bollinger(values: List[float], period: int, mult: float):

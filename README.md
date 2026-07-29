@@ -8,8 +8,8 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**All ten of the video's strategies are implemented**, plus **Fib Retracement**
-as an addition beyond them.
+**All ten of the video's strategies are implemented**, plus **Fib Retracement**,
+**Fair Value Gap** and **Reversal** as additions beyond them.
 
 ---
 
@@ -49,6 +49,8 @@ linked sections document how each was fitted and what it is worth.
 | 9 | [CCI Williams](#cci-williams-strategy-9) | Two oscillators must agree on exhaustion |
 | 10 | [Multi Horizon](#multi-horizon-strategy-10) | Z-score agreement across three timeframes — **strongest here** |
 | + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
+| + | Fair Value Gap | Trade the retest of a 3-candle price imbalance |
+| + | [Reversal](#reversal-beyond-the-video) | Candles, divergence and structure breaks — N of 3 must agree |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -544,6 +546,74 @@ Three findings came out of the sweep:
 - **"With Trend" here**, which combined with Reversion means buying a
   down-stretch while price is above the MA — buy the dip in an uptrend. (Volume
   Exhaustion preferred *Against* Trend; different setups, no contradiction.)
+
+## Reversal (beyond the video)
+
+*Three independent ways of arguing a move is out of participants, with a
+configurable agreement threshold.* Rather than one "reversal" rule, this
+implements three **detectors** that each vote a direction:
+
+| Detector | Fires when |
+|----------|-----------|
+| **Candlestick pattern** | Engulfing, hammer / shooting star, morning / evening star, or piercing / dark cloud — required to print **at** an N-bar extreme |
+| **Divergence** | Price makes a lower low / higher high that RSI or the MACD histogram fails to confirm, measured between the last two confirmed pivots |
+| **Market structure** | A double top / bottom whose neckline just broke, or a break of structure: a lower-low downtrend whose latest swing high gives way |
+
+`min_confirmations` (1–3) turns them from an OR into a consensus, and is clamped
+to the number of detectors actually enabled so it can never silently mute the
+strategy. `predict_direction` then takes the call at face value (**Reversal**) or
+fades it (**Continuation**). A bar with votes on both sides is discarded.
+
+Divergence and structure both rest on fractal pivots, which are only knowable
+`pivot_right` bars after they print. Pivots are fed in through a **confirmation
+cursor** that admits a pivot only once the scan reaches `j + pivot_right`, so
+nothing a signal reads is unavailable in real time. This is verified by a
+truncation test: re-running on a series cut at each signal bar reproduces every
+signal with zero future bars available.
+
+| Group | Params |
+|-------|--------|
+| **Candlestick Patterns** | `use_engulfing` ☑, `use_pin_bar` ☑, `use_star` ☑, `use_piercing` ☐, `min_body_ratio`, `min_wick_ratio` |
+| **Location** | `use_location` ☑, `swing_lookback`, `extreme_tolerance_atr` |
+| **Pivots** | `pivot_left`, `pivot_right`, `max_pivot_gap` |
+| **Divergence** | `use_divergence` ☐, `osc_type`, `rsi_length`, `macd_*`, `min_osc_gap` |
+| **Structure** | `use_structure` ☐, `structure_pattern`, `retest_tolerance_atr` |
+| **Confirmation** | `min_confirmations` |
+| **Volatility** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Decision** | `predict_direction` (Reversal \| Continuation) |
+
+### Presets — and what did *not* work
+
+Selected with a **genuine holdout**, unlike the other presets in this repo:
+train on 2024-07 → 2025-11, freeze the pick, then score 2025-11 → 2026-07. The
+years 2018–2024 were never loaded by the sweep at all and act as a second,
+much larger out-of-sample check.
+
+| preset | bets | hit | 2018-23 (unswept) | train | HOLDOUT | worst yr |
+|--------|-----:|----:|------:|------:|--------:|---------:|
+| PM 5m BOS Volume | 32,630 | 56.60% | 58.08% | 54.02% | 54.83% | 54.07% (2024) |
+| PM 5m BOS Balanced | 22,386 | 56.84% | 58.09% | 55.09% | 55.86% | 53.67% (2024) |
+
+Both are **Break of Structure traded as Continuation** — i.e. *fade* the break.
+The evidence that this is not a curve fit: the never-swept 2018–2023 years score
+*higher* than the window that was optimised on, the holdout beats train for both
+presets, and it is not directional beta (bets run ~48% long / ~52% short while
+the share of all 5m candles closing up is 49.6–50.5% in every year).
+
+**Where it fails.** 2017 (partial year, Aug–Dec) scores 43.9% / 44.7% — far below
+chance, and not noise at ~1,000 bets. That is the mechanism running in reverse:
+these presets fade structure breaks, and 2017 was a parabolic bull run in which
+breaks kept going. Expect losses in a sustained runaway trend. The edge also
+decays: 58% across 2018–2023 against 54–56% across 2024–2026.
+
+**Not shipped.** The candlestick-pattern family (384 configs) hit 54–55% on train
+but fell to 49–53% on the holdout across every top config, and RSI/MACD
+divergence never cleared 50.7% on train at any usable volume. Both remain
+available as parameters; neither earned a preset.
+
+The `+0.13` EV per \$1 at 0.50 odds assumes a 0.50 fill, which a real Polymarket
+book will not offer on a directional 5m market. Hit rate is the finding; the EV
+figure is an upper bound.
 
 ## Fib Retracement (beyond the video)
 

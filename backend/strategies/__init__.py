@@ -16,6 +16,7 @@ from .fib_retracement import FibRetracement
 from .jump_exhaustion import JumpExhaustion
 from .multi_horizon import MultiHorizon
 from .regime_switch import RegimeSwitch
+from .reversal import Reversal
 from .rsi_bb import RsiBb
 from .stoch_wick import StochWick
 from .volume_exhaustion import VolumeExhaustion
@@ -37,6 +38,7 @@ register(MultiHorizon())
 # framework and held to the same evidence bar.
 register(FairValueGap())
 register(FibRetracement())
+register(Reversal())
 
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
@@ -56,3 +58,4 @@ register(Combined())
 # --- Additions beyond the video ----------------------------------------------
 #      Fair Value Gap     (fair_value_gap.py)     <-- DONE
 #      Fib Retracement    (fib_retracement.py)    <-- DONE
+#      Reversal           (reversal.py)           <-- DONE

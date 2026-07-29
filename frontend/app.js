@@ -170,6 +170,13 @@ function buildQuickSetup(schema) {
   syncQuickState();
 }
 
+/** Enable or disable every sub-strategy at once. Leaves the preset dropdowns
+ *  untouched, mirroring setAllPresets() which leaves the checkboxes alone. */
+function setAllEnabled(on) {
+  for (const cb of document.querySelectorAll('#quickList [data-use]')) cb.checked = on;
+  syncQuickState();
+}
+
 /** Set every strategy's preset dropdown to `name` (only where that option
  *  exists), then refresh the hint. Leaves the enable checkboxes untouched. */
 function setAllPresets(name) {
@@ -185,6 +192,14 @@ function syncQuickState() {
   const boxes = [...document.querySelectorAll('#quickList [data-use]')];
   const on = boxes.filter((b) => b.checked).length;
   boxes.forEach((b) => b.closest('.srow').classList.toggle('off', !b.checked));
+
+  // Master toggle reflects the list: ticked when all are on, dashed
+  // (indeterminate) on a partial selection. A click while dashed selects all,
+  // which is the browser's own default for an indeterminate checkbox.
+  const master = $('selectAll');
+  master.checked = boxes.length > 0 && on === boxes.length;
+  master.indeterminate = on > 0 && on < boxes.length;
+  master.disabled = boxes.length === 0;
 
   const orMode = $('agreeMode').value === 'OR';
   const inp = $('minAgree');
@@ -419,6 +434,7 @@ async function init() {
   $('tabConfig').onclick = () => setTab('config');
   $('minAgree').oninput = syncQuickState;
   $('agreeMode').onchange = syncQuickState;
+  $('selectAll').onchange = (e) => setAllEnabled(e.target.checked);
   $('bulkPreset').onchange = (e) => setAllPresets(e.target.value);
   sel.onchange = () => buildForm(CATALOG[sel.value]);
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
