@@ -9,10 +9,10 @@ time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
 **All ten of the video's strategies are implemented**, plus additions beyond
-them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Elliott Wave**
-and **Renko** — classic chart-analysis tools built on the same framework and
-held to the same evidence bar, along with **Moon Phase**, kept as a documented
-null.
+them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Harmonic
+Patterns**, **Elliott Wave** and **Renko** — classic chart-analysis tools built
+on the same framework and held to the same evidence bar, along with **Moon
+Phase**, kept as a documented null.
 
 ---
 
@@ -54,6 +54,7 @@ linked sections document how each was fitted and what it is worth.
 | + | Fair Value Gap | Trade the retest of a 3-candle price imbalance |
 | + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
 | + | [Reversal](#reversal-beyond-the-video) | Candles, divergence and structure breaks — N of 3 must agree |
+| + | [Harmonic Patterns](#harmonic-patterns-beyond-the-video) | Buy the XABCD completion zone — Gartley, Bat, Butterfly, Crab, … |
 | ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
 | + | [Elliott Wave](#elliott-wave-beyond-the-video) | Count impulse waves mechanically, bet the next leg |
 | + | [Renko](#renko-beyond-the-video) | Fade the brick that breaks a one-way run |
@@ -711,6 +712,142 @@ available as parameters; neither earned a preset.
 The `+0.13` EV per \$1 at 0.50 odds assumes a 0.50 fill, which a real Polymarket
 book will not offer on a directional 5m market. Hit rate is the finding; the EV
 figure is an upper bound.
+
+## Harmonic Patterns (beyond the video)
+
+*XABCD geometry, entered at the completion zone.* Harmonic pattern theory
+(Gartley 1935, formalised with Fibonacci ratios by Scott Carney) says a reversal
+can be anticipated from the **proportions** of the last four swing legs. Label
+five alternating swing points X-A-B-C-D and each named pattern is one box in a
+four-dimensional space of leg ratios:
+
+| pattern | AB/XA | BC/AB | CD/BC | D |
+|---------|-------|-------|-------|---|
+| Gartley | 0.618 | 0.382–0.886 | 1.13–1.618 | 0.786 of XA |
+| Bat | 0.382–0.50 | 0.382–0.886 | 1.618–2.618 | 0.886 of XA |
+| Butterfly | 0.786 | 0.382–0.886 | 1.618–2.618 | 1.27–1.618 of XA |
+| Crab | 0.382–0.618 | 0.382–0.886 | 2.618–3.618 | 1.618 of XA |
+| Cypher | 0.382–0.618 | 1.13–1.414 \* | 1.272–2.0 | 0.786 of XC |
+| Shark | free | 1.13–1.618 \* | 1.618–2.24 | 0.886–1.13 of XA |
+| AB=CD | free | 0.382–0.886 | 1.13–2.618 | CD = AB |
+
+(\* measured against XA rather than AB, as those two patterns are defined.)
+
+X-A-B-C are known; **D is a forecast**. Its price is projected two independent
+ways — from the pattern's own D ratio and from the CD/BC extension — and the
+overlap is the **Potential Reversal Zone**. The bet is placed on the bar that
+first trades into that zone: long a bullish pattern's PRZ (X low, A high, B low,
+C high, D low), short a bearish one's.
+
+The usual objection to harmonic patterns is that they are drawn after the fact —
+pick different swing points and every ratio changes. Two rules remove the
+discretion: swing points are **fractal pivots** cleaned into a strictly
+alternating sequence and admitted only once the scan reaches `j + pivot_right`,
+and a pattern is built from the **last four confirmed pivots and nothing else**.
+A truncation test (regenerate on the series cut off *at* each signal bar)
+reproduces 120 sampled signals across the three presets with zero mismatches.
+
+An armed PRZ is a standing order until price reaches it, price blows through its
+far side by more than `prz_overshoot_atr`, `max_bars_to_d` bars elapse, or the
+pivot C it hangs off is overwritten by a more extreme one. Several can be armed
+at once; a bar where a bullish and a bearish zone both complete is discarded.
+
+| Group | Params |
+|-------|--------|
+| **Pivots** | `pivot_left`, `pivot_right` |
+| **Patterns** | `use_gartley` … `use_abcd`, `ratio_tolerance`, `require_cd_zone` |
+| **Geometry** | `min_xa_atr`, `max_pattern_bars`, `max_bars_to_d`, `max_prz_atr` |
+| **PRZ Entry** | `prz_entry` (Wick Touch \| Close Inside), `prz_overshoot_atr` |
+| **Entry Timing** | `require_opposing_bar`, `opposing_bar_min_atr` |
+| **Volatility** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Decision** | `predict_direction` (Reversal \| Continuation) |
+
+`ratio_tolerance` pads every window in the table above on both sides, in ratio
+units — it is the single knob deciding how strict "a Gartley" is.
+
+### Polymarket presets
+
+Fitted to **the last two years**, split rather than used whole: train
+2024-07-29 → 2025-11-01, then the pick frozen and 2025-11-01 → 2026-07-29 scored
+once. The years before 2024-07 were never loaded by the sweep. 5,032
+configurations over four stages; selection was mechanical (bet floor, both train
+halves ≥ 52%, `pivot_left` off the grid boundary, then highest train hit rate).
+
+| preset | bets | hit | z | unswept 2017–24 | 2yr | train | HOLDOUT | worst full yr |
+|--------|-----:|----:|--:|------:|------:|------:|--------:|---------:|
+| PM 5m Volume | 43,820 | 55.38% | +22.5 | 55.59% | 54.70% | 54.56% | 54.93% | 54.07% (2024) |
+| **PM 5m Balanced** | 13,144 | **57.11%** | +16.3 | 57.28% | 56.38% | 56.49% | 56.19% | 54.42% (2024) |
+| PM 5m Selective | 3,972 | 57.28% | +9.2 | 57.06% | 57.97% | 60.24% | 54.37% | 54.77% (2021) |
+
+**Balanced is the pick** — it gives up 1.4pp against Selective for 3.3× the
+volume, and its train / holdout / unswept columns agree to within 1.1pp.
+Selective is the one to distrust: 60.24% train against 54.37% on 366 holdout
+bets. Evidence this is not a curve fit: the never-swept 2017–2024 years score
+*higher* than the window optimised on, on 3–5× the bets; bets split evenly and
+both sides win at the same rate (Volume: 21,544 long at 55.44%, 22,276 short at
+55.33%) while 49.6–50.5% of all 5m candles close up in every year.
+
+**The textbook direction is right.** Every admitted config bets *with* the
+pattern: Reversal 54.70 / 56.41 / 58.11% against Continuation 45.19 / 43.56 /
+41.89% on the same bets. Note this is also the mean-reverting direction — a
+bullish PRZ is reached by price falling into it — which is what every strategy
+that works in this repo has in common.
+
+### The Fibonacci ratios earn almost nothing; the shape constraint earns
+
+Replace the pattern set with **one free box** — AB, BC and CD unconstrained, D at
+an arbitrary retracement `r` of XA, everything else identical — and walk `r`
+through the canonical values and deliberate non-canonical neighbours:
+
+| r | hit | vs neighbours | | r | hit | vs neighbours |
+|---|-----|------|--|---|-----|------|
+| 0.300 | 51.00% | — | | 0.886 \* | 53.72% | +0.29pp |
+| 0.382 \* | 50.59% | **−0.99pp** | | 0.950 | 53.08% | −0.29pp |
+| 0.450 | 52.17% | +0.71pp | | 1.000 ~ | 53.02% | −0.22pp |
+| 0.500 ~ | 52.32% | +0.07pp | | 1.130 | 53.40% | −0.06pp |
+| 0.550 | 52.32% | +0.04pp | | 1.272 \* | 53.90% | +0.03pp |
+| 0.618 \* | 52.25% | **−0.21pp** | | 1.450 | 54.32% | +0.43pp |
+| 0.700 | 52.61% | −0.29pp | | 1.618 \* | 53.89% | −0.07pp |
+| 0.786 \* | 53.54% | +0.34pp | | 1.800 | 53.60% | — |
+
+(\* = canonical Fibonacci, ~ = conventional but not Fibonacci.) Hit rate rises
+smoothly with depth and there is **no bump at the golden-ratio values**: 0.618
+comes in 0.21pp *below* the mean of its neighbours and 0.382 is the worst point
+on the curve. Same verdict [Fib Retracement](#the-fibonacci-ratios-earn-nothing)
+reached from the other direction.
+
+**But the joint constraint does earn.** The best free box tops out at 54.0–54.3%,
+and tightening it until it is nearly as selective as the real thing does not
+close the gap (3,664 bets at 54.15%, against the six real boxes at 2,537 bets and
+56.41%). Requiring AB, BC *and* CD jointly in range is worth roughly +2pp over
+any single D-level rule. Shifting every pattern's AB and D window off its
+textbook centre confirms the values are a weak optimum at best:
+
+| offset | −0.15 | −0.10 | −0.05 | **0.00** | +0.05 | +0.10 | +0.15 |
+|--------|------:|------:|------:|------:|------:|------:|------:|
+| 2yr hit | 54.54% | 55.17% | 55.97% | **56.41%** | 55.69% | 55.69% | 54.65% |
+| holdout | 56.38% | 55.85% | 54.41% | 56.19% | 56.16% | **57.69%** | 56.43% |
+
+Canonical peaks on the fitted window by 0.4–0.6pp, but the holdout column peaks
+at +0.10. Read that as "the textbook numbers are a reasonable place to put the
+boxes", not as evidence that phi does anything.
+
+**Per pattern** (one enabled at a time, Balanced settings, 2 years): Crab 479
+bets @ 59.08% (z +4.0), Butterfly 347 @ 59.65% (+3.6), Gartley 902 @ 55.88%
+(+3.5), Bat 646 @ 55.11% (+2.6), Cypher 188 @ 55.32% (+1.5), Shark 144 @ 52.78%
+(+0.7), AB=CD 3,365 @ 54.23% (+4.9). AB=CD — the one pattern with no Fibonacci
+content at all — carries the most total edge by z purely on volume, at the lowest
+rate. Balanced and Selective leave it off; Volume keeps it on, which is most of
+why Volume has 3× the bets and 2pp less edge.
+
+**Where it fails.** 2017 (partial year, Aug–Dec) scores 44.9 / 48.2 / 43.8% — far
+below chance, and not noise at 105–1,434 bets. That is the mechanism in reverse:
+these presets buy reversals, and 2017 was a parabolic run in which they did not
+come. Reversal's BOS presets break in the same year for the same reason. The edge
+also decays — 55–60% across 2018–2023 against 54–58% across 2024–2026 — and
+volume is thin: Balanced is ~1,270 bets/year, Selective ~470. The Volume preset's
+Against-SMA50 trend filter was selected over no filter by +0.22pp on train; do
+not read meaning into it.
 
 ## Fib Retracement (beyond the video)
 
@@ -1437,12 +1574,13 @@ numbers. Add the new id to `SUB_IDS` in `strategies/combined.py` as well if it
 should be offered as a Quick Setup voter.
 
 All ten of the video's strategies are implemented; `Fair Value Gap`,
-`Fib Retracement`, `Elliott Wave` and `Renko` are additions beyond them, held to
-the same evidence bar. A strategy whose signals depend on structure that is only
-knowable *after* the fact (a swing pivot, a Renko brick) must record when it
-became knowable and gate on that — see `zigzag()` in `elliott_wave.py`. The check
-that this worked is a **prefix test**: signals generated from `candles[:m]` must
-be exactly the signals from the whole series that fall before `m`.
+`Fib Retracement`, `Reversal`, `Harmonic Patterns`, `Elliott Wave` and `Renko`
+are additions beyond them, held to the same evidence bar. A strategy whose
+signals depend on structure that is only knowable *after* the fact (a swing
+pivot, a Renko brick) must record when it became knowable and gate on that — see
+`zigzag()` in `elliott_wave.py`, or the confirmation cursor in `harmonic.py`. The
+check that this worked is a **prefix test**: signals generated from `candles[:m]`
+must be exactly the signals from the whole series that fall before `m`.
 
 ## Layout
 
@@ -1472,6 +1610,7 @@ backend/
     multi_horizon.py
     fair_value_gap.py    beyond the video: 3-candle imbalance retest
     fib_retracement.py   beyond the video: swing-leg Fibonacci retracement
+    harmonic.py          beyond the video: XABCD harmonic patterns (PRZ entry)
     elliott_wave.py      beyond the video: causal zigzag impulse-wave counting
     renko.py             beyond the video: close-based brick runs and reversals
     combined.py      meta-strategy: N-of-M agreement (Quick Setup tab)
