@@ -8,8 +8,11 @@ bars. The framework is built so you can drop in the other nine strategies over
 time — the dashboard renders each strategy's parameter form automatically from
 the backend schema.
 
-**All ten of the video's strategies are implemented**, plus **Fib Retracement**,
-**Fair Value Gap** and **Reversal** as additions beyond them.
+**All ten of the video's strategies are implemented**, plus additions beyond
+them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Elliott Wave**
+and **Renko** — classic chart-analysis tools built on the same framework and
+held to the same evidence bar, along with **Moon Phase**, kept as a documented
+null.
 
 ---
 
@@ -48,10 +51,12 @@ linked sections document how each was fitted and what it is worth.
 | 8 | [Jump Exhaustion](#jump-exhaustion-strategy-8) | Fade the overshoot — the Saturday effect |
 | 9 | [CCI Williams](#cci-williams-strategy-9) | Two oscillators must agree on exhaustion |
 | 10 | [Multi Horizon](#multi-horizon-strategy-10) | Z-score agreement across three timeframes — **strongest here** |
-| + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
 | + | Fair Value Gap | Trade the retest of a 3-candle price imbalance |
+| + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
 | + | [Reversal](#reversal-beyond-the-video) | Candles, divergence and structure breaks — N of 3 must agree |
 | ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
+| + | [Elliott Wave](#elliott-wave-beyond-the-video) | Count impulse waves mechanically, bet the next leg |
+| + | [Renko](#renko-beyond-the-video) | Fade the brick that breaks a one-way run |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -818,6 +823,295 @@ stability did not predict survival**: configs scoring 63.7% and 66.4% on the two
 halves of the training span still collapsed to 50.0% on 2024-26. Only the real
 holdout separated these tiers — which is the argument for keeping one.
 
+## Elliott Wave (beyond the video)
+
+*Count the impulse mechanically and bet the next leg.* Elliott Wave says a trend
+unfolds as a five-leg impulse (1-2-3-4-5) followed by a three-leg correction, and
+that three rules are inviolable: **R1** wave 2 never retraces more than 100% of
+wave 1, **R2** wave 3 is never the shortest of 1/3/5, **R3** wave 4 never
+overlaps wave 1's territory. Three tradeable claims fall out: after 1-2 comes
+wave 3, after 1-2-3-4 comes wave 5, and after a complete five comes a correction.
+
+Wave counting is normally discretionary — which is what makes the theory hard to
+falsify, since a count that fails gets relabelled rather than marked wrong.
+Nothing here is discretionary. Swings come from an **ATR-thresholded zigzag**
+where each pivot carries two bar numbers: where it happened (`i`) and where the
+reversal that proved it made it knowable (`c`). Signals may only use pivots whose
+`c` is at or before the current bar, so an in-progress leg's extreme is never
+treated as a pivot. The count is then read off the last few confirmed pivots, and
+a structure that does not match is skipped.
+
+| Group | Params |
+|-------|--------|
+| **Wave Detection** | `atr_length`, `pivot_atr_mult`, `min_pivot_bars`, `min_wave1_atr` |
+| **Wave Rules** | `enforce_impulse_rules` ☑, `wave2_min/max_retrace`, `wave4_min/max_retrace` |
+| **Setup** | `trade_setup` (Wave 3 ⋁ Wave 5 ⋁ Wave 3 + 5 ⋁ Post-Impulse Reversal), `entry_mode` (Pivot Confirm ⋁ Retrace Zone), `max_setup_age_bars` |
+| **Entry Timing** | `require_opposing_bar` ☑, `opposing_bar_min_atr` |
+| **Volatility Filter** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Decision** | `predict_direction` (Follow Count ⋁ Fade Count) |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
+
+`enforce_impulse_rules` is **a switch, not a law** — deliberately, so a sweep can
+ask whether an "Elliott-valid" count predicts better than the same swing
+structure with the rules removed.
+
+### The three rules earn nothing — except on a complete count
+
+2,016 pairs of configurations identical in every other parameter, one with
+R1/R2/R3 on and one with them off, pooled over the training span:
+
+| Setup / entry mode | Rules ON | | Rules OFF | | Δ |
+|---|---:|---:|---:|---:|---:|
+| Wave 3, Pivot Confirm | 1,448,881 | 54.75% | 1,771,303 | 54.77% | −0.02pp |
+| Wave 3, Retrace Zone | 2,545,238 | 54.96% | 2,567,167 | 55.10% | −0.15pp |
+| Wave 3+5, Pivot Confirm | 4,443,684 | 54.81% | 6,561,539 | 54.78% | +0.03pp |
+| Wave 3+5, Retrace Zone | 8,390,683 | 54.63% | 11,681,785 | 54.17% | +0.46pp |
+| Wave 5, Retrace Zone | 356,306 | 53.42% | 2,580,450 | 53.75% | −0.33pp |
+| **Wave 5, Pivot Confirm** | **126,160** | **57.18%** | 1,309,607 | 54.65% | **+2.53pp** |
+
+Five of six cells are indistinguishable from zero. The rules pay in exactly one
+place — a **complete, confirmed 1-2-3-4 count** — where they buy +2.53pp at the
+cost of 90% of the volume. That is also the only cell where R2 and R3 can be
+evaluated at all; both need the whole structure. R1 alone, which is all a wave-3
+setup can test, is worth −0.02pp. Elliott's constraints are not a general filter;
+one conjunction of them is a rare-setup detector, and *PM 5m Hi Hit* is that
+detector.
+
+The Fibonacci-shaped retracement zones fare no better, echoing the Fib
+Retracement result one strategy over: the wave-4 zone does best switched **off**
+(wide 54.80% vs the textbook 0.236–0.786 band at 54.44% vs the tight
+0.146–0.618 at 54.15%). What pays is plain depth on wave 2 — 0.5–1.0 gives
+54.82%, 0.236–1.0 gives 54.68%, wide gives 54.37%.
+
+### Polymarket presets
+
+Three sweep stages, 8,340 combinations, whole DB (939,433 5m bars, 2017-08 →
+2026-07). Selected on **2017-2023 only**; 1,558 of 7,836 scored configurations
+passed admission (z ≥ 2.5 on train, both train halves ≥ 52%, every train year
+with ≥ 25 bets above 50%), and each preset is the top train hit rate in its
+bet-count band. The TEST column was scored afterwards.
+
+| Preset | Bets | Hit | Train 17-23 | TEST 24-26 | 2025-26 | Worst yr | z |
+|--------|-----:|----:|------------:|-----------:|--------:|---------:|--:|
+| **PM 5m Balanced** | 5,285 | 58.81% | 60.59% | 55.39% | 54.48% | 52.38% | 12.5 |
+| PM 5m Volume | 8,182 | 57.14% | 59.00% | 53.43% | 52.91% | 52.63% | **13.3** |
+| PM 5m Selective | 1,488 | 60.95% | 62.34% | **58.04%** | 56.19% | 53.07% | 7.8 |
+| PM 5m Hi Hit | 384 | **67.45%** | 67.66% | **67.11%** | 64.89% | 58.06% | 5.4 |
+
+***Balanced is the preset to use*** on volume-vs-margin grounds — ~1 bet per 15
+hours, 55.39% across 1,809 out-of-sample bets, no year below 52.4%. Selective is
+the better *rate* out of sample on a third of the volume.
+
+Findings beyond the numbers:
+
+- **Mean reversion in both entry modes** — and the two winners carry *opposite*
+  `predict_direction` settings. Pooled: Pivot Confirm + Fade 51.73% (vs Follow
+  47.78%); Retrace Zone + Follow 51.13% (vs Fade 48.39%). They are the same
+  trade: Retrace Zone + Follow buys while the wave-2 pullback is still falling;
+  Pivot Confirm + Fade sells after the zigzag confirms the bounce off that low.
+  Both fade the most recent move, where every strategy in this repo has landed.
+- **`require_opposing_bar` is the most valuable single filter again** — the third
+  independent confirmation, after Multi Horizon and Fib Retracement. 58.55% vs
+  57.76%, 57.43% vs 56.45%, 61.99% vs 59.68% across the three lanes, and the
+  minimum body helps monotonically (0.0 → 0.75 ×ATR gives 58.06 → 58.73%).
+- **Bigger swings, better bets, to a plateau.** `pivot_atr_mult` 2.5 / 4.0 / 6.0
+  / 9.0 gives 53.83 / 55.58 / 55.97 / 55.49%.
+- **The trend filter barely matters here**, unlike Fib Retracement: Against Trend
+  58.40% vs filter-off 58.32%.
+
+⚠️ **Do not push this one for volume.** The widest admissible net — 28,618 bets,
+54.58% on train — collapses to 50.74% on the holdout and 49.76% over 2025-26,
+i.e. to nothing. Elliott's edge lives entirely in selectivity, which is why no
+preset runs wider than ~8,000 bets. And *Hi Hit* is the one tier in this repo
+that does **not** shrink (67.66% train → 67.11% holdout) — but it fires ~43 times
+a year, so its 149 holdout bets carry a ±7.6pp interval. Genuinely
+out-of-sample, and genuinely thin.
+
+### …and refitted on the trailing 2 years
+
+The presets above have decayed: over 2024-07-28 → 2026-07-28 (210,528 bars)
+*PM 5m Volume* runs at **52.55%** against the 59.00% it showed on its own
+training span. So all three stages were re-run over that window alone. There is
+no holdout inside it, so admission could only use in-window stability (z ≥ 2.5,
+both one-year halves ≥ 52%, ≥ 60 bets per half); 2,983 of 7,777 configurations
+passed.
+
+The in-window number is fitted and therefore biased. The column that isn't is
+**2017-2023** — years the refit never saw:
+
+| Preset | Last 2yr (fitted) | | 2017-2023 (unseen) | | Halves |
+|---|---:|---:|---:|---:|:--|
+| **PM 5m Volume - 2yr Train** | 1,898 | 56.38% | 4,771 | 56.89% | 56.19 / 56.56 |
+| PM 5m Balanced - 2yr Train | 803 | 58.53% | 2,020 | 57.38% | 55.37 / 61.98 |
+
+Both hold their rate on the years they were not fitted to — which is what
+separates a durable setting that happens to be current from a regime call. **On
+recent tape the refit beats the full-record fit at matched volume: 1,898 bets at
+56.38% against 2,135 at 52.55%, +3.8pp.**
+
+Run over the *whole* record, *Volume - 2yr Train* is also the flattest preset
+here year to year — everything from 2018 on lands in a 4pp band:
+
+| | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Volume - 2yr Train | 46.9% | 54.4% | 58.6% | 57.1% | 57.8% | 58.2% | 58.0% | 57.9% | 55.3% | 58.1% |
+| *(bets)* | *226* | *719* | *696* | *699* | *822* | *763* | *846* | *902* | *961* | *534* |
+
+The only year below 50% is the partial 2017 on 226 bets. Compare the
+full-record *PM 5m Volume*, which runs 57-61% through 2018-2023 and then 54.3 /
+52.6 / 53.4% in 2024-26. Fitting on the recent window did not chase the recent
+regime; it found a setting that was always there.
+
+The refit also *relocated* the strategy. Both 2yr presets are **Wave 5 + Pivot
+Confirm + Fade Count** — the structure the full-record fit used only for its
+thinnest tier — and *Balanced - 2yr Train* is the second preset to turn Elliott's
+rules **on**. Recent tape rewards waiting for a complete 1-2-3-4 count and fading
+its wave-4 confirmation. Neither uses the opposing-bar, volatility or trend
+filters: over two years none of them earned their place, which is itself a
+warning about choosing filters from two years of data.
+
+⚠️ These carry **no out-of-sample evidence for the fit itself** — the 2017-2023
+column is the past, not the future, and the full-record presets looked just as
+good before they decayed. *Balanced - 2yr Train* is the less stable of the two
+(55.37% then 61.98% by half). No Selective or Hi Hit tier is shipped for this
+window: the best candidates were 257 bets at 61.48% and 138 at 64.49% — about 1.5
+bets a week with a ±6pp interval and no holdout, which is not evidence.
+
+## Renko (beyond the video)
+
+*Fade the brick that breaks a one-way run.* A Renko chart throws away time: a
+fixed-size **brick** prints only when price moves a full brick beyond the last
+one, so a quiet hour prints nothing and a violent one prints six. What is left is
+a stair-step of same-size moves — a deliberately crude noise filter that cannot
+wiggle. A **run** of N bricks is N brick-sizes of net one-way movement with
+volatility already divided out; the **reversal** brick that ends it is the
+chart's own definition of "that trend just broke".
+
+Bricks are built from **closes only**, so the sequence never depends on assuming
+which of a bar's extremes came first — an assumption a backtest cannot check and
+which flatters wick-based Renko. The cost is honest: this is the slower, less
+sensitive Renko, and a bar that spikes and returns prints nothing.
+
+| Group | Params |
+|-------|--------|
+| **Brick Size** | `brick_mode` (ATR ⋁ Percent ⋁ Fixed), `atr_length`, `brick_atr_mult`, `brick_pct`, `brick_fixed` |
+| **Bricks** | `reversal_bricks` |
+| **Signal** | `trigger` (Brick Reversal ⋁ Brick Run ⋁ Any New Brick), `min_run_bricks`, `max_new_bricks` |
+| **Volatility Filter** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Decision** | `predict_direction` (Follow Brick ⋁ Fade Brick) |
+| **Trend Filter** | `use_trend_filter` ☑, `trend_logic`, `ma_type`, `ma_length`, `source` |
+
+### The naive comparison says the run structure is worthless. It isn't.
+
+Stage 1 pooled each trigger over its whole grid and concluded that *Any New
+Brick* — the control, with no run or reversal structure at all — **beat** both
+structured triggers (54.57% vs 53.79% and 52.47%). That was an artifact of
+averaging `min_run_bricks` from 1 to 8 together. Stage 2 ran the *same brick
+grid* through every trigger, so the comparison is matched (132 grids, train only):
+
+| Trigger | Bets | Hit | vs control |
+|---|---:|---:|---:|
+| Brick Reversal, run ≥ 8 | 108,710 | 57.98% | **+1.19pp** |
+| Brick Reversal, run ≥ 5 | 280,062 | 57.42% | **+1.13pp** |
+| Brick Run, run ≥ 8 | 88,978 | 57.13% | +0.56pp |
+| Brick Reversal, run ≥ 3 | 576,241 | 56.81% | +0.51pp |
+| Brick Reversal, run ≥ 2 | 850,997 | 56.61% | +0.26pp |
+| *Any New Brick (control)* | 3,491,721 | 56.55% | — |
+| Brick Reversal, run ≥ 1 | 1,270,608 | 56.09% | −0.13pp |
+
+The pattern is real and monotone in run length, and only appears from run ≥ 3.
+*Brick Run* (fade a run as it extends) is consistently worse than *Brick
+Reversal* (fade the brick that breaks it) at the same length — the turn matters,
+not just the run.
+
+### Polymarket presets
+
+Three sweep stages, 2,832 combinations, same DB and same protocol as above; 793
+of 2,172 scored configurations passed admission. `Fixed` brick mode was excluded
+from the sweep — over a record where BTC runs from ~$3k to ~$110k, one dollar
+brick is absurdly coarse at one end and absurdly fine at the other.
+
+| Preset | Bets | Hit | Train 17-23 | TEST 24-26 | 2025-26 | Worst yr | z |
+|--------|-----:|----:|------------:|-----------:|--------:|---------:|--:|
+| **PM 5m Volume** | 8,115 | 58.16% | 58.59% | **55.94%** | **56.01%** | **55.17%** | **14.2** |
+| PM 5m Balanced | 3,844 | 59.81% | 60.81% | 56.07% | 57.58% | 54.45% | 11.9 |
+| PM 5m Selective | 1,154 | 60.92% | 62.56% | 52.41% | 53.61% | 51.11% | 7.8 |
+| PM 5m Hi Hit | 328 | 63.11% | 64.55% | 60.19% | 56.94% | 44.00% | 4.3 |
+
+***Volume is the preset to use*** — it loses only 2.7 points train-to-holdout,
+the smallest shrinkage in this file, holds 55.94% across 1,314 out-of-sample
+bets, and **every calendar year in the record is at or above 55.17%**. It is also
+the highest-volume tier, which is not the usual ordering here.
+
+Findings beyond the numbers:
+
+- **Fade Brick, overwhelmingly** — by 8-10 points on every trigger (54.57% vs
+  44.93%, 53.79% vs 45.55%, 52.47% vs 46.84%). A Renko brick on BTC 5m is an
+  overshoot, not a breakout.
+- **Bigger bricks, better bets, to a point.** `brick_atr_mult` 1.0 → 6.0 gives
+  56.26 / 57.14 / 57.25 / 56.32 / 56.04 / 55.28%; `brick_pct` 0.3 → 1.5 gives
+  56.07 / 56.56 / 56.59 / 57.03 / 57.06%. ATR and Percent sizing perform about
+  equally (56.60% vs 56.39%).
+- **`reversal_bricks` ≥ 2 is worth ~0.7pp** over flipping on every brick (1/2/3/4
+  → 56.15 / 56.84 / 56.81 / 56.72%). The classic Renko rule is right and there is
+  nothing beyond it.
+- **`max_new_bricks` earns nothing** — 0/1/2 give 56.48 / 56.53 / 56.50%. Worth
+  knowing before reaching for it.
+- **"With Trend" helps here**, opposite to Fib Retracement and Volume
+  Exhaustion: With Trend EMA200 58.70% vs filter-off 57.89% vs Against Trend
+  ~57.8%. With Fade Brick that reads as *fade DOWN bricks while price is above
+  the EMA200* — buy dips in an uptrend.
+
+⚠️ Same volume warning as Elliott Wave: the widest admissible net (82,807 bets,
+54.24% train) falls to 50.80% on the holdout. **Selective is NOT RECOMMENDED** —
+62.56% train against 52.41% holdout is a −10.2pp shrinkage. **Hi Hit is thin**
+(~36 bets/year; 2026 so far is 44.0% on 25 bets). And **ATR-mode bricks are not
+reproducible from one number** — brick size tracks recent volatility, so two runs
+over different date ranges do not share a brick grid; Percent mode is scale-free
+with a fixed yardstick, which is why most presets use it.
+
+### …and refitted on the trailing 2 years
+
+Same three stages re-run over 2024-07-28 → 2026-07-28 alone, same
+stability-only admission (867 of 2,172 configurations passed):
+
+| Preset | Last 2yr (fitted) | | 2017-2023 (unseen) | | Halves |
+|---|---:|---:|---:|---:|:--|
+| **PM 5m Volume - 2yr Train** | 1,852 | 56.80% | 11,143 | 57.92% | 55.41 / 58.58 |
+| PM 5m Balanced - 2yr Train | 784 | 59.69% | 4,883 | 59.57% | 59.38 / 60.12 |
+
+Both hold across the unseen years, *Balanced - 2yr Train* almost exactly (59.69%
+vs 59.57%) — Renko's structure is stable across regimes in a way Elliott Wave's
+was not. Over the whole record every single year clears 52% for both (scored
+inside a full-history run, so 2024-26 differs slightly from the standalone table
+above — see the brick-anchor caveat below):
+
+| | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Volume - 2yr Train | 52.2% | 57.9% | 63.1% | 59.6% | 57.5% | 58.4% | 60.3% | 55.2% | 57.2% | 54.6% |
+| Balanced - 2yr Train | 53.7% | 60.6% | 62.6% | 59.1% | 59.7% | 60.0% | 61.5% | 56.1% | 56.5% | 57.4% |
+
+**Here the refit buys volume, not rate.** Unlike Elliott Wave the full-record
+Renko presets have *not* decayed: *PM 5m Volume* still runs 58.09% over the
+trailing 2 years, better per bet than the refit's 56.80% — but it only fires 964
+times in that window against 1,852. So:
+
+- best rate on recent tape → full-record **PM 5m Volume**;
+- roughly double the bets for ~1.3pp → **PM 5m Volume - 2yr Train**;
+- better on *both* axes than full-record Balanced (57.44% on 585) →
+  **PM 5m Balanced - 2yr Train** (59.69% on 784).
+
+The refit also softened the run requirement — *Volume - 2yr Train* uses
+`min_run_bricks = 2`, below the run ≥ 3 threshold where the matched comparison
+above found the structure starts paying. Over two years the shorter run wins on
+volume; over nine it does not. Treat it as the volume knob it is.
+
+⚠️ No out-of-sample evidence for the fit itself. And the **brick-anchor effect
+is visible in these numbers**: scoring *Volume - 2yr Train* inside a full-history
+run gives 55.38% versus 56.80% standalone — 1.4pp purely from where the grid is
+anchored. The tables use the standalone run, which is what the dashboard gives
+you for that date range.
+
 ## Volume Exhaustion (strategy #7)
 
 *Fade the climax bar.* A decisive bar printed on abnormally heavy volume is often
@@ -1139,8 +1433,16 @@ treat it as suggestive. Days are UTC.
 That's it — it appears in the dropdown and its params render automatically. Params
 support four `kind`s — `int`, `float`, `bool` (checkbox), and `enum` (dropdown,
 via `options=[…]`) — so a strategy can expose toggles and choices, not just
-numbers. All ten of the video's strategies are implemented; `Fib Retracement` is
-an addition beyond them, held to the same evidence bar.
+numbers. Add the new id to `SUB_IDS` in `strategies/combined.py` as well if it
+should be offered as a Quick Setup voter.
+
+All ten of the video's strategies are implemented; `Fair Value Gap`,
+`Fib Retracement`, `Elliott Wave` and `Renko` are additions beyond them, held to
+the same evidence bar. A strategy whose signals depend on structure that is only
+knowable *after* the fact (a swing pivot, a Renko brick) must record when it
+became knowable and gate on that — see `zigzag()` in `elliott_wave.py`. The check
+that this worked is a **prefix test**: signals generated from `candles[:m]` must
+be exactly the signals from the whole series that fall before `m`.
 
 ## Layout
 
@@ -1168,7 +1470,12 @@ backend/
     cci_williams.py
     volume_exhaustion.py
     multi_horizon.py
+    fair_value_gap.py    beyond the video: 3-candle imbalance retest
     fib_retracement.py   beyond the video: swing-leg Fibonacci retracement
+    elliott_wave.py      beyond the video: causal zigzag impulse-wave counting
+    renko.py             beyond the video: close-based brick runs and reversals
+    combined.py      meta-strategy: N-of-M agreement (Quick Setup tab)
+    common.py        shared param groups (trading window, trend filter, MA/source)
     __init__.py      registers strategies (add new ones here)
 frontend/
   index.html  style.css  app.js  lightweight-charts.js (vendored)

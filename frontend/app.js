@@ -120,7 +120,8 @@ let ACTIVE_TAB = 'quick';
 // it silently emptied this list as strategies with their own preset sets were
 // added (Fair Value Gap alone cut it from 7 options to 1).
 const BULK_PRESETS = [
-  'PM 5m Volume', 'PM 5m Volume - 2yr Train', 'PM 5m Balanced', 'PM 5m Hi Hit',
+  'PM 5m Volume', 'PM 5m Balanced', 'PM 5m Selective', 'PM 5m Hi Hit',
+  'PM 5m Volume - 2yr Train', 'PM 5m Balanced - 2yr Train',
   'PM 5m Wknd Volume', 'PM 5m Wknd Balanced', 'PM 5m Wknd Hi Hit',
 ];
 

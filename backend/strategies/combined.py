@@ -39,7 +39,7 @@ from .base import Param, ParamGroup, Signal, Strategy
 SUB_IDS = ["rsi_bb", "stoch_wick", "atr_devexh", "bb_squeeze", "zscore_ms",
            "regime_switch", "volume_exhaustion", "jump_exhaustion",
            "cci_williams", "multi_horizon", "fair_value_gap", "fib_retracement",
-           "reversal", "moon_phase"]
+           "reversal", "moon_phase", "elliott_wave", "renko"]
 
 # Offered as voters but UNTICKED by default, and excluded from the "everything
 # on" presets below. These are measured nulls: available to experiment with, but
