@@ -39,7 +39,15 @@ from .base import Param, ParamGroup, Signal, Strategy
 SUB_IDS = ["rsi_bb", "stoch_wick", "atr_devexh", "bb_squeeze", "zscore_ms",
            "regime_switch", "volume_exhaustion", "jump_exhaustion",
            "cci_williams", "multi_horizon", "fair_value_gap", "fib_retracement",
-           "reversal"]
+           "reversal", "moon_phase"]
+
+# Offered as voters but UNTICKED by default, and excluded from the "everything
+# on" presets below. These are measured nulls: available to experiment with, but
+# a voter with no edge can only dilute an agreement rule, so enabling one has to
+# be a deliberate click rather than something that happens silently. Ticking
+# "Select all strategies" in Quick Setup still turns them on — that is an
+# explicit action.
+DEFAULT_OFF = {"moon_phase"}
 
 DEFAULT_PRESET = "— defaults —"
 
@@ -85,8 +93,11 @@ class Combined(Strategy):
         picks = []
         for sid, S in subs:
             options = [DEFAULT_PRESET] + list(S.presets().keys())
-            picks.append(Param(f"use_{sid}", S.name, True, "bool",
-                               help=f"Include {S.name} as a voter."))
+            on = sid not in DEFAULT_OFF
+            picks.append(Param(f"use_{sid}", S.name, on, "bool",
+                               help=f"Include {S.name} as a voter."
+                                    + ("" if on else " Off by default: this one "
+                                       "was measured and found to have no edge.")))
             picks.append(Param(f"preset_{sid}", f"{S.name} preset", DEFAULT_PRESET,
                                "enum", options=options,
                                help=f"Which {S.name} preset casts its vote."))
@@ -96,15 +107,18 @@ class Combined(Strategy):
     def presets(self) -> dict:
         subs = [sid for sid, _ in _available()]
         only = lambda keep: {f"use_{s}": (s in keep) for s in subs}
+        # "everything on" means every voter with a measured edge, not literally
+        # every registered strategy — see DEFAULT_OFF.
+        every = [s for s in subs if s not in DEFAULT_OFF]
         return {
             # OR: any single signal passes through — the widest net.
-            "Any signal (OR)": {"agreement_mode": "OR", **only(subs)},
+            "Any signal (OR)": {"agreement_mode": "OR", **only(every)},
             # Two independent confirmations.
             "Confirmed (2 agree)": {"agreement_mode": "AND", "min_agree": 2,
-                                    "strict_same_direction": True, **only(subs)},
+                                    "strict_same_direction": True, **only(every)},
             # High conviction.
             "High conviction (3 agree)": {"agreement_mode": "AND", "min_agree": 3,
-                                          "strict_same_direction": True, **only(subs)},
+                                          "strict_same_direction": True, **only(every)},
             # The three mean-reversion strategies validated in this repo, 2 of 3.
             "Validated trio (2 of 3)": {"agreement_mode": "AND", "min_agree": 2,
                                         "strict_same_direction": True,

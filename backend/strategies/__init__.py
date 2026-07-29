@@ -14,6 +14,7 @@ from .combined import Combined
 from .fair_value_gap import FairValueGap
 from .fib_retracement import FibRetracement
 from .jump_exhaustion import JumpExhaustion
+from .moon_phase import MoonPhase
 from .multi_horizon import MultiHorizon
 from .regime_switch import RegimeSwitch
 from .reversal import Reversal
@@ -39,6 +40,7 @@ register(MultiHorizon())
 register(FairValueGap())
 register(FibRetracement())
 register(Reversal())
+register(MoonPhase())
 
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
@@ -59,3 +61,4 @@ register(Combined())
 #      Fair Value Gap     (fair_value_gap.py)     <-- DONE
 #      Fib Retracement    (fib_retracement.py)    <-- DONE
 #      Reversal           (reversal.py)           <-- DONE
+#      Moon Phase         (moon_phase.py)         <-- DONE (folklore; see its presets)

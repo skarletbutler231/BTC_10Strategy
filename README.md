@@ -51,6 +51,7 @@ linked sections document how each was fitted and what it is worth.
 | + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
 | + | Fair Value Gap | Trade the retest of a 3-candle price imbalance |
 | + | [Reversal](#reversal-beyond-the-video) | Candles, divergence and structure breaks — N of 3 must agree |
+| ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -546,6 +547,97 @@ Three findings came out of the sweep:
 - **"With Trend" here**, which combined with Reversion means buying a
   down-stretch while price is above the MA — buy the dip in an uptrend. (Volume
   Exhaustion preferred *Against* Trend; different setups, no contradiction.)
+
+## Moon Phase (a measured negative)
+
+*The lunar folklore, implemented so it can be tested rather than argued about.*
+"Buy the new moon, sell the full moon" — the claim is that sentiment tracks the
+lunar cycle, so the waxing half (new → full) is bullish and the waning half
+bearish. There is real academic work behind it (Dichev & Janes 2003; Yuan, Zheng
+& Zhu 2006 reported lower equity returns around full moons), though it is widely
+held not to survive correction for multiple testing — and none of it concerns
+five-minute crypto bars.
+
+**Phase model.** Phase is a pure function of the timestamp, so this needs no
+market data and no dependencies. Every new and full moon is computed with Meeus
+*Astronomical Algorithms* Ch.49 — validated to under a minute against published
+lunations — and a bar's phase is its interpolated position between the
+surrounding anchors. Both anchors are used deliberately: a lunation is **not**
+symmetric, and the full moon can fall up to ~20 h from the midpoint between two
+new moons, so interpolating from new moons alone would misplace the Full Moon
+bucket by 22% of a bucket width.
+
+### The result: nothing
+
+Measured directly on 939,513 BTCUSDT 5m bars (2017-08 → 2026-07) — bucket every
+bar by phase, record whether the **next** candle closed up. The null is the base
+rate, not 50%: BTC's 5m candles close up 50.147% of the time.
+
+| phase bucket | bars | up-rate | vs base | z |
+|---|---:|---:|---:|---:|
+| New Moon | 117,250 | 50.004% | −0.142pp | −0.97 |
+| Waxing Crescent | 117,194 | 50.276% | +0.130pp | +0.89 |
+| First Quarter | 117,082 | 50.026% | −0.121pp | −0.83 |
+| Waxing Gibbous | 117,124 | 50.161% | +0.015pp | +0.10 |
+| Full Moon | 116,677 | 50.145% | −0.001pp | −0.01 |
+| Waning Gibbous | 116,530 | 50.120% | −0.026pp | −0.18 |
+| Last Quarter | 116,001 | 50.270% | +0.124pp | +0.84 |
+| Waning Crescent | 117,113 | 50.170% | +0.024pp | +0.16 |
+
+Not one bucket moves the base rate by 0.15pp, and the largest |z| across all
+eight is **0.97** — short of significance before correcting for eight tests, let
+alone after. Testing the claim directly: the waxing half's up-rate is 50.096%
+and the waning half's is 50.198%, a difference of **−0.102pp (z = −0.99)**. The
+folklore predicts a *positive* difference, so the point estimate does not merely
+fail to reach significance, it leans the wrong way.
+
+This is a **strong** null. At ~117k bars per bucket the standard error is
+0.15pp, so a genuine 0.5pp effect would have shown at z > 3. Nothing is there.
+
+**Why running it scores ~49.7%.** The folklore end-to-end hits 49.708% — and
+*inverting* it hits 49.809%. Both below 50%, which looks paradoxical until you
+count flat candles: 4,541 bars (0.48%) close exactly at their open and score as
+losses either way. That structural cost, not a hidden reverse edge, is the whole
+story. Any "moon strategy" that looks profitable on this data is showing you the
+selection applied on top of it, not the moon.
+
+### An optimisation was run anyway. It failed instructively.
+
+"Sweep it harder" is the obvious next thought, so it was: **1,530 configs** —
+255 non-empty subsets of the 8 phase buckets × 2 directions × 3 trend-filter
+modes — under the same train / holdout / unswept protocol as the Reversal
+presets.
+
+Best on train: **51.76%** (6,223 bets), *Waxing Long / Against Trend / Waxing
+Crescent only*. That looks shippable until the controls run.
+
+**Control 1 — a meaningless cycle does better.** Re-running the identical sweep
+with the moon replaced by an arbitrary **31.7-day** cycle gives a best train hit
+of **51.92%**, beating the real moon. Whatever the sweep found is a best-of-1,530
+order statistic, not an astronomical one.
+
+**Control 2 — the moon adds nothing over the trend filter.** Every top config
+used *Against Trend*, which forces side = long below EMA200 / short above it. The
+phase subset therefore cannot choose direction, only which bars are taken. Over
+the unswept years:
+
+| rule | bets | hit |
+|---|---:|---:|
+| pure Against Trend, **no moon at all** | 681,818 | 50.82% |
+| + the "winning" subset (Waxing Crescent) | 84,803 | 50.76% |
+| + the other seven buckets | 597,015 | 50.83% |
+| + a fake 31.7-day cycle, 1 of 8 | 85,228 | 50.72% |
+
+The optimised lunar filter scores **worse** than using no lunar filter, while
+cutting volume ~8×. The ~50.8% is the mean-reversion edge of the Against-Trend
+filter — documented elsewhere in this repo, far too thin to trade after costs,
+and nothing to do with the moon.
+
+**No preset ships**, and it is deliberately left out of `combined.py`'s
+`SUB_IDS` — a voter with no edge can only dilute an agreement rule. The strategy
+is kept because a measured negative is worth more than an untested rumour, and
+because the ephemeris is reusable: a daily or weekly horizon, where the original
+equity research actually operated, is a different and untested question.
 
 ## Reversal (beyond the video)
 
