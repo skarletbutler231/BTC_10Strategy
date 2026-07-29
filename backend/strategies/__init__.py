@@ -2,9 +2,9 @@
 
 This is the ONLY place you touch to enable a new strategy in the dashboard.
 All ten of the video's strategies are implemented, plus Fair Value Gap, Fib
-Retracement, Reversal, Harmonic Patterns, Moon Phase, Elliott Wave and Renko
-(additions beyond the video). Filters shared between strategies (trading window,
-trend filter, MA/source helpers) live in common.py.
+Retracement, Reversal, Harmonic Patterns, Momentum Indicators, Moon Phase,
+Elliott Wave and Renko (additions beyond the video). Filters shared between
+strategies (trading window, trend filter, MA/source helpers) live in common.py.
 """
 
 from ..registry import register
@@ -17,6 +17,7 @@ from .fair_value_gap import FairValueGap
 from .fib_retracement import FibRetracement
 from .harmonic import Harmonic
 from .jump_exhaustion import JumpExhaustion
+from .momentum import Momentum
 from .moon_phase import MoonPhase
 from .multi_horizon import MultiHorizon
 from .regime_switch import RegimeSwitch
@@ -45,6 +46,7 @@ register(FairValueGap())
 register(FibRetracement())
 register(Reversal())
 register(Harmonic())
+register(Momentum())
 register(MoonPhase())
 register(ElliottWave())
 register(Renko())
@@ -69,6 +71,7 @@ register(Combined())
 #      Fib Retracement    (fib_retracement.py)    <-- DONE
 #      Reversal           (reversal.py)           <-- DONE
 #      Harmonic Patterns  (harmonic.py)           <-- DONE
+#      Momentum Indicators(momentum.py)           <-- DONE
 #      Moon Phase         (moon_phase.py)         <-- DONE (folklore; see its presets)
 #      Elliott Wave       (elliott_wave.py)       <-- DONE
 #      Renko              (renko.py)              <-- DONE

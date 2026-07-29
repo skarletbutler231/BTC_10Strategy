@@ -579,6 +579,113 @@ def macd(values: List[float], fast: int, slow: int, signal: int):
     return line, sig, hist
 
 
+def roc(values: List[float], period: int) -> List[Num]:
+    """Rate of Change: percent change over `period` bars.
+
+    The plainest momentum measure there is — everything else in the momentum
+    family is a smoothing or a bounded rescaling of this idea. Undefined for the
+    first `period` bars, and where the reference price is zero.
+    """
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0:
+        return out
+    for i in range(period, n):
+        prev = values[i - period]
+        if prev:
+            out[i] = (values[i] - prev) / prev * 100.0
+    return out
+
+
+def tsi(values: List[float], long_period: int, short_period: int) -> List[Num]:
+    """True Strength Index (-100..100).
+
+    Bar-to-bar momentum, double-smoothed by EMA, divided by the same double
+    smoothing of its absolute value. The division is what bounds it: when every
+    move is in one direction the two agree and TSI approaches +/-100; when moves
+    cancel out the numerator shrinks while the denominator does not.
+    """
+    n = len(values)
+    out: List[Num] = [None] * n
+    if n < 2 or long_period <= 0 or short_period <= 0:
+        return out
+    mom = [0.0] + [values[i] - values[i - 1] for i in range(1, n)]
+    absmom = [abs(v) for v in mom]
+
+    def double_smooth(series: List[float]) -> List[Num]:
+        first = ema(series, long_period)
+        start = next((i for i, v in enumerate(first) if v is not None), n)
+        res: List[Num] = [None] * n
+        if start >= n:
+            return res
+        for k, v in enumerate(ema([float(x) for x in first[start:]], short_period)):
+            res[start + k] = v
+        return res
+
+    num, den = double_smooth(mom), double_smooth(absmom)
+    for i in range(n):
+        a, b = num[i], den[i]
+        if a is not None and b:
+            out[i] = 100.0 * a / b
+    return out
+
+
+def awesome_oscillator(candles: list[dict], fast: int, slow: int) -> List[Num]:
+    """Bill Williams' Awesome Oscillator: SMA(hl2, fast) - SMA(hl2, slow).
+
+    In price units, so callers must scale it (by ATR) before comparing it with
+    anything. Positive means the recent midpoint sits above the older one.
+    """
+    hl2 = [(c["high"] + c["low"]) / 2.0 for c in candles]
+    f, s = sma(hl2, fast), sma(hl2, slow)
+    out: List[Num] = [None] * len(candles)
+    for i in range(len(candles)):
+        if f[i] is not None and s[i] is not None:
+            out[i] = f[i] - s[i]
+    return out
+
+
+def ultimate_oscillator(candles: list[dict], p1: int, p2: int, p3: int) -> List[Num]:
+    """Wilder's Ultimate Oscillator (0-100) across three lookbacks.
+
+    Buying pressure (close - the lower of low and the previous close) over true
+    range, averaged on each horizon and weighted 4:2:1 toward the shortest. The
+    three horizons are the point: it is deliberately harder to whipsaw than a
+    single-period oscillator. O(n) via running sums.
+    """
+    n = len(candles)
+    out: List[Num] = [None] * n
+    periods = sorted({p for p in (p1, p2, p3) if p > 0})
+    if n < 2 or len(periods) < 3:
+        return out
+    a, b, c_ = periods                      # shortest .. longest
+
+    bp: List[float] = [0.0] * n
+    tr: List[float] = [0.0] * n
+    for i in range(1, n):
+        cur, prev_close = candles[i], candles[i - 1]["close"]
+        low = min(cur["low"], prev_close)
+        bp[i] = cur["close"] - low
+        tr[i] = max(cur["high"], prev_close) - low
+
+    sums = {p: [0.0, 0.0] for p in periods}  # period -> [sum bp, sum tr]
+    for i in range(1, n):
+        for p, acc in sums.items():
+            acc[0] += bp[i]
+            acc[1] += tr[i]
+            if i - p >= 1:                   # drop the bar leaving the window
+                acc[0] -= bp[i - p]
+                acc[1] -= tr[i - p]
+        if i < c_:
+            continue
+        ta, tb, tc = sums[a][1], sums[b][1], sums[c_][1]
+        if ta <= 0 or tb <= 0 or tc <= 0:
+            continue
+        out[i] = 100.0 * (4.0 * sums[a][0] / ta + 2.0 * sums[b][0] / tb
+                          + sums[c_][0] / tc) / 7.0
+    return out
+
+
 def bollinger(values: List[float], period: int, mult: float):
     """Bollinger Bands on `values`: returns (basis, upper, lower) lists.
 

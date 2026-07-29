@@ -10,9 +10,9 @@ the backend schema.
 
 **All ten of the video's strategies are implemented**, plus additions beyond
 them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Harmonic
-Patterns**, **Elliott Wave** and **Renko** — classic chart-analysis tools built
-on the same framework and held to the same evidence bar, along with **Moon
-Phase**, kept as a documented null.
+Patterns**, **Momentum Indicators**, **Elliott Wave** and **Renko** — classic
+chart-analysis tools built on the same framework and held to the same evidence
+bar, along with **Moon Phase**, kept as a documented null.
 
 ---
 
@@ -55,6 +55,7 @@ linked sections document how each was fitted and what it is worth.
 | + | [Fib Retracement](#fib-retracement-beyond-the-video) | Buy the pullback into a measured swing leg |
 | + | [Reversal](#reversal-beyond-the-video) | Candles, divergence and structure breaks — N of 3 must agree |
 | + | [Harmonic Patterns](#harmonic-patterns-beyond-the-video) | Buy the XABCD completion zone — Gartley, Bat, Butterfly, Crab, … |
+| + | [Momentum Indicators](#momentum-indicators-beyond-the-video) | Nine oscillators on one scale — fade the stretched composite |
 | ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
 | + | [Elliott Wave](#elliott-wave-beyond-the-video) | Count impulse waves mechanically, bet the next leg |
 | + | [Renko](#renko-beyond-the-video) | Fade the brick that breaks a one-way run |
@@ -849,6 +850,111 @@ volume is thin: Balanced is ~1,270 bets/year, Selective ~470. The Volume preset'
 Against-SMA50 trend filter was selected over no filter by +0.22pp on train; do
 not read meaning into it.
 
+## Momentum Indicators (beyond the video)
+
+*Nine momentum oscillators put on one scale and averaged.* Momentum theory says
+the **rate** at which price moves carries information the price level does not.
+Every classic indicator measures that rate differently, and they disagree
+constantly — mostly because they are quoted on incomparable scales. So each is
+mapped to a score in `[-1, +1]` and the composite **M** is their mean:
+
+| oscillator | normalised as |
+|---|---|
+| ROC | `clamp(roc% / (norm × ATR%))` |
+| RSI | `(rsi - 50) / 50` |
+| Stochastic %K | `(%K - 50) / 50` |
+| Williams %R | `(%R + 50) / 50` |
+| CCI | `clamp(cci / 200)` |
+| Ultimate | `(uo - 50) / 50` |
+| MACD histogram | `clamp(hist / (norm × ATR))` |
+| TSI | `tsi / 100` |
+| Awesome | `clamp(ao / (norm × ATR))` |
+
+The three that live in price units are divided by ATR, which is what makes them
+comparable across 2017 and 2026 without refitting. ROC, RSI, Stochastic,
+Williams %R, CCI and Ultimate share **one** `osc_length` rather than carrying six
+near-duplicate parameters; only the two-EMA family (MACD, TSI, Awesome) keeps its
+own fast/slow pair, because there the *gap* between the lengths is the indicator.
+
+`trigger_mode` picks the event, each defining a momentum direction `d`:
+
+| trigger | fires when | d |
+|---|---|---|
+| **Extreme** | `\|M\|` first reaches `score_threshold` | `sign(M)` |
+| **Zero Cross** | M changes sign | `sign(M)` |
+| **Momentum Turn** | M's slope flips while `\|M\|` is still extreme | sign of the new slope |
+
+`predict_direction` then trades with `d` (**Follow**: momentum persists) or
+against it (**Fade**: momentum exhausts).
+
+### Polymarket presets
+
+Fitted to **the last two years**, split rather than used whole: train
+2024-07-29 → 2025-11-01, pick frozen, then 2025-11-01 → 2026-07-29 scored once.
+1,644 configurations over three stages; mechanical selection.
+
+| preset | bets | hit | z | unswept 2017–24 | 2yr | train | HOLDOUT | worst full yr |
+|--------|-----:|----:|--:|------:|------:|------:|--------:|---------:|
+| PM 5m Volume | 33,061 | 57.18% | +26.1 | 57.98% | 55.25% | 54.93% | 55.86% | 55.4% (2024) |
+| **PM 5m Balanced** | 12,765 | **58.46%** | +19.1 | 59.17% | 56.98% | 57.40% | 56.10% | 56.9% (2024) |
+| PM 5m Selective | 1,124 | 62.81% | +8.6 | 62.93% | 62.65% | 64.26% | 59.24% | 55.4% (2024) |
+
+**Balanced is the pick.** Volume trades 2.6× as often for 1.3pp less edge, and
+Selective posts the best headline while being the least trustworthy number here.
+
+### What the sweep actually found
+
+**Fade, not follow.** Pooled: Fade 50.23% train / 51.50% holdout against Follow
+49.62% / 48.43% — and every Follow config that looked good on train fell to
+47–49% out of sample. Momentum theory's headline claim, that a fast move keeps
+going, is false at the 5m horizon. The exhaustion half of the same theory is not.
+
+**Only the Extreme trigger works.**
+
+| trigger | train | holdout |
+|---|------:|--------:|
+| Extreme | 52.16% | 53.72% |
+| Momentum Turn | 49.62% | 50.19% |
+| Zero Cross | 49.31% | 51.04% |
+
+Worth dwelling on: "momentum is decelerating" is the more sophisticated-sounding
+idea and it carries nothing. The second derivative is indistinguishable from
+noise, and so is the zero cross. All of the edge is in the plain, unfashionable
+observation that the reading is stretched.
+
+**Stochastic %K and Williams %R are the same number.** Over one window,
+`%R = %K - 100`, so after recentring they normalise to an identical score —
+verified equal to 2e-16. Two of the nine "independent" oscillators are one
+measurement wearing two names, and the default panel silently double-weights it.
+
+**RSI carries the panel.** One oscillator at a time, at the Balanced settings:
+
+| alone | bets | hit | | alone | bets | hit |
+|---|-----:|----:|--|---|-----:|----:|
+| RSI | 5,531 | **56.28%** | | Awesome | 8,611 | 51.68% |
+| Ultimate | 6,183 | 54.50% | | Stochastic | 41,994 | 51.28% |
+| CCI | 20,625 | 52.07% | | ROC | 38,165 | 50.32% |
+
+Against the full nine-oscillator composite at 4,088 bets and 56.65%. Eight
+further momentum indicators, averaged in, buy about **0.4pp** over RSI on its
+own. And ROC — the purest expression of momentum in the family — is a coin flip
+by itself.
+
+**`min_agree` does nothing** (1/5/9 → 54.12/54.12/54.14%). Once `|M| ≥ 0.5` the
+oscillators already agree by construction, so the vote threshold has nothing
+left to reject.
+
+**The trend filter is redundant by construction.** Fading a momentum extreme is
+*definitionally* against the short-term trend, so Against-Trend/SMA50 passes 100%
+of signals and With-Trend/SMA50 passes 0%. Only a much slower MA can disagree —
+which is exactly what Selective's With-Trend EMA200 exploits.
+
+**Where it fails.** 2017 (partial year) scores 45.5 / 46.7 / 53.8%, well below
+chance: fading exhaustion loses in a parabolic run. Every mean-reversion strategy
+in this repo fails in that same year. The edge also decays — 57–64% across
+2018–2023 against 55–57% across 2024–2026 — and Selective's two train halves are
+55.4% and 69.3%, a 14pp spread that no holdout can make respectable.
+
 ## Fib Retracement (beyond the video)
 
 *Trade the pullback inside a measured swing leg.* Take a swing **leg** — a
@@ -1574,8 +1680,8 @@ numbers. Add the new id to `SUB_IDS` in `strategies/combined.py` as well if it
 should be offered as a Quick Setup voter.
 
 All ten of the video's strategies are implemented; `Fair Value Gap`,
-`Fib Retracement`, `Reversal`, `Harmonic Patterns`, `Elliott Wave` and `Renko`
-are additions beyond them, held to the same evidence bar. A strategy whose
+`Fib Retracement`, `Reversal`, `Harmonic Patterns`, `Momentum Indicators`,
+`Elliott Wave` and `Renko` are additions beyond them, held to the same evidence bar. A strategy whose
 signals depend on structure that is only knowable *after* the fact (a swing
 pivot, a Renko brick) must record when it became knowable and gate on that — see
 `zigzag()` in `elliott_wave.py`, or the confirmation cursor in `harmonic.py`. The
@@ -1611,6 +1717,7 @@ backend/
     fair_value_gap.py    beyond the video: 3-candle imbalance retest
     fib_retracement.py   beyond the video: swing-leg Fibonacci retracement
     harmonic.py          beyond the video: XABCD harmonic patterns (PRZ entry)
+    momentum.py          beyond the video: nine momentum oscillators, normalised
     elliott_wave.py      beyond the video: causal zigzag impulse-wave counting
     renko.py             beyond the video: close-based brick runs and reversals
     combined.py      meta-strategy: N-of-M agreement (Quick Setup tab)
