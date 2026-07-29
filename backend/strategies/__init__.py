@@ -2,9 +2,10 @@
 
 This is the ONLY place you touch to enable a new strategy in the dashboard.
 All ten of the video's strategies are implemented, plus Fair Value Gap, Fib
-Retracement and Candlesticks (additions beyond the video). Filters shared
-between strategies (trading window, trend filter, MA/source helpers) live in
-common.py.
+Retracement, Candlesticks, Reversal, Harmonic Patterns, Momentum Indicators,
+Moon Phase, Elliott Wave and Renko (additions beyond the video). Filters
+shared between strategies (trading window, trend filter, MA/source helpers)
+live in common.py.
 """
 
 from ..registry import register
@@ -13,11 +14,17 @@ from .bb_squeeze import BBSqueeze
 from .candlesticks import Candlesticks
 from .cci_williams import CCIWilliams
 from .combined import Combined
+from .elliott_wave import ElliottWave
 from .fair_value_gap import FairValueGap
 from .fib_retracement import FibRetracement
+from .harmonic import Harmonic
 from .jump_exhaustion import JumpExhaustion
+from .momentum import Momentum
+from .moon_phase import MoonPhase
 from .multi_horizon import MultiHorizon
 from .regime_switch import RegimeSwitch
+from .renko import Renko
+from .reversal import Reversal
 from .rsi_bb import RsiBb
 from .stoch_wick import StochWick
 from .volume_exhaustion import VolumeExhaustion
@@ -40,6 +47,12 @@ register(MultiHorizon())
 register(FairValueGap())
 register(FibRetracement())
 register(Candlesticks())
+register(Reversal())
+register(Harmonic())
+register(Momentum())
+register(MoonPhase())
+register(ElliottWave())
+register(Renko())
 
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
@@ -60,3 +73,9 @@ register(Combined())
 #      Fair Value Gap     (fair_value_gap.py)     <-- DONE
 #      Fib Retracement    (fib_retracement.py)    <-- DONE
 #      Candlesticks       (candlesticks.py)       <-- DONE
+#      Reversal           (reversal.py)           <-- DONE
+#      Harmonic Patterns  (harmonic.py)           <-- DONE
+#      Momentum Indicators(momentum.py)           <-- DONE
+#      Moon Phase         (moon_phase.py)         <-- DONE (folklore; see its presets)
+#      Elliott Wave       (elliott_wave.py)       <-- DONE
+#      Renko              (renko.py)              <-- DONE

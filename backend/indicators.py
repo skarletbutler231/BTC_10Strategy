@@ -332,6 +332,36 @@ def rolling_swing(candles: list[dict], window: int):
     return hh, ll, hi_i, lo_i
 
 
+def pivots(candles: list[dict], left: int, right: int):
+    """Fractal swing pivots -> (pivot_high, pivot_low), index-aligned.
+
+    ``pivot_high[j]`` is ``high[j]`` when that high is the highest of the window
+    ``[j-left, j+right]``, else None; ``pivot_low[j]`` mirrors it on lows. Ties
+    are inclusive, so a flat plateau marks every bar in it as a pivot.
+
+    LOOK-AHEAD WARNING: a pivot at bar j depends on the `right` bars that come
+    AFTER it, so it is not knowable until bar ``j + right``. Callers must not
+    read ``pivot_*[j]`` while scanning any bar earlier than ``j + right`` — see
+    the confirmation cursor in strategies/reversal.py for the pattern that
+    enforces this.
+    """
+    n = len(candles)
+    ph: List[Num] = [None] * n
+    pl: List[Num] = [None] * n
+    if left < 0 or right < 0:
+        return ph, pl
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    for j in range(left, n - right):
+        lo_b, hi_b = j - left, j + right + 1
+        h, l = highs[j], lows[j]
+        if all(highs[k] <= h for k in range(lo_b, hi_b)):
+            ph[j] = h
+        if all(lows[k] >= l for k in range(lo_b, hi_b)):
+            pl[j] = l
+    return ph, pl
+
+
 def adx(candles: list[dict], period: int) -> List[Num]:
     """Wilder's ADX (0-100) — trend STRENGTH, direction-agnostic.
 
@@ -520,6 +550,140 @@ def stochastic(candles: list[dict], k_length: int, d_length: int):
             continue
         d[i] = sum(window) / d_length
     return k, d
+
+
+def macd(values: List[float], fast: int, slow: int, signal: int):
+    """MACD -> (macd_line, signal_line, histogram), each index-aligned.
+
+    macd = EMA(fast) - EMA(slow); signal = EMA(macd, signal); hist = macd-signal.
+    The signal EMA is seeded from the first bar where the MACD line is defined,
+    so it warms up off real values rather than treating the None prefix as data.
+    """
+    n = len(values)
+    line: List[Num] = [None] * n
+    sig: List[Num] = [None] * n
+    hist: List[Num] = [None] * n
+    ef, es = ema(values, fast), ema(values, slow)
+    for i in range(n):
+        a, b = ef[i], es[i]
+        if a is not None and b is not None:
+            line[i] = a - b
+
+    start = next((i for i, v in enumerate(line) if v is not None), n)
+    if start < n:
+        for k, v in enumerate(ema([float(x) for x in line[start:]], signal)):
+            sig[start + k] = v
+    for i in range(n):
+        if line[i] is not None and sig[i] is not None:
+            hist[i] = line[i] - sig[i]
+    return line, sig, hist
+
+
+def roc(values: List[float], period: int) -> List[Num]:
+    """Rate of Change: percent change over `period` bars.
+
+    The plainest momentum measure there is — everything else in the momentum
+    family is a smoothing or a bounded rescaling of this idea. Undefined for the
+    first `period` bars, and where the reference price is zero.
+    """
+    n = len(values)
+    out: List[Num] = [None] * n
+    if period <= 0:
+        return out
+    for i in range(period, n):
+        prev = values[i - period]
+        if prev:
+            out[i] = (values[i] - prev) / prev * 100.0
+    return out
+
+
+def tsi(values: List[float], long_period: int, short_period: int) -> List[Num]:
+    """True Strength Index (-100..100).
+
+    Bar-to-bar momentum, double-smoothed by EMA, divided by the same double
+    smoothing of its absolute value. The division is what bounds it: when every
+    move is in one direction the two agree and TSI approaches +/-100; when moves
+    cancel out the numerator shrinks while the denominator does not.
+    """
+    n = len(values)
+    out: List[Num] = [None] * n
+    if n < 2 or long_period <= 0 or short_period <= 0:
+        return out
+    mom = [0.0] + [values[i] - values[i - 1] for i in range(1, n)]
+    absmom = [abs(v) for v in mom]
+
+    def double_smooth(series: List[float]) -> List[Num]:
+        first = ema(series, long_period)
+        start = next((i for i, v in enumerate(first) if v is not None), n)
+        res: List[Num] = [None] * n
+        if start >= n:
+            return res
+        for k, v in enumerate(ema([float(x) for x in first[start:]], short_period)):
+            res[start + k] = v
+        return res
+
+    num, den = double_smooth(mom), double_smooth(absmom)
+    for i in range(n):
+        a, b = num[i], den[i]
+        if a is not None and b:
+            out[i] = 100.0 * a / b
+    return out
+
+
+def awesome_oscillator(candles: list[dict], fast: int, slow: int) -> List[Num]:
+    """Bill Williams' Awesome Oscillator: SMA(hl2, fast) - SMA(hl2, slow).
+
+    In price units, so callers must scale it (by ATR) before comparing it with
+    anything. Positive means the recent midpoint sits above the older one.
+    """
+    hl2 = [(c["high"] + c["low"]) / 2.0 for c in candles]
+    f, s = sma(hl2, fast), sma(hl2, slow)
+    out: List[Num] = [None] * len(candles)
+    for i in range(len(candles)):
+        if f[i] is not None and s[i] is not None:
+            out[i] = f[i] - s[i]
+    return out
+
+
+def ultimate_oscillator(candles: list[dict], p1: int, p2: int, p3: int) -> List[Num]:
+    """Wilder's Ultimate Oscillator (0-100) across three lookbacks.
+
+    Buying pressure (close - the lower of low and the previous close) over true
+    range, averaged on each horizon and weighted 4:2:1 toward the shortest. The
+    three horizons are the point: it is deliberately harder to whipsaw than a
+    single-period oscillator. O(n) via running sums.
+    """
+    n = len(candles)
+    out: List[Num] = [None] * n
+    periods = sorted({p for p in (p1, p2, p3) if p > 0})
+    if n < 2 or len(periods) < 3:
+        return out
+    a, b, c_ = periods                      # shortest .. longest
+
+    bp: List[float] = [0.0] * n
+    tr: List[float] = [0.0] * n
+    for i in range(1, n):
+        cur, prev_close = candles[i], candles[i - 1]["close"]
+        low = min(cur["low"], prev_close)
+        bp[i] = cur["close"] - low
+        tr[i] = max(cur["high"], prev_close) - low
+
+    sums = {p: [0.0, 0.0] for p in periods}  # period -> [sum bp, sum tr]
+    for i in range(1, n):
+        for p, acc in sums.items():
+            acc[0] += bp[i]
+            acc[1] += tr[i]
+            if i - p >= 1:                   # drop the bar leaving the window
+                acc[0] -= bp[i - p]
+                acc[1] -= tr[i - p]
+        if i < c_:
+            continue
+        ta, tb, tc = sums[a][1], sums[b][1], sums[c_][1]
+        if ta <= 0 or tb <= 0 or tc <= 0:
+            continue
+        out[i] = 100.0 * (4.0 * sums[a][0] / ta + 2.0 * sums[b][0] / tb
+                          + sums[c_][0] / tc) / 7.0
+    return out
 
 
 def bollinger(values: List[float], period: int, mult: float):
