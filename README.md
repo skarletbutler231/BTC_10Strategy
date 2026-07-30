@@ -10,10 +10,10 @@ the backend schema.
 
 **All ten of the video's strategies are implemented**, plus additions beyond
 them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Harmonic
-Patterns**, **Momentum Indicators**, **Elliott Wave** and **Renko** — classic
-chart-analysis tools built on the same framework and held to the same evidence
-bar, along with **Moon Phase**, kept as a documented null.
-This also includes **Candlesticks** as a formula-based addition.
+Patterns**, **Momentum Indicators**, **Elliott Wave**, **Renko**, **Trend Lines**
+and **Gann Angles** — classic chart-analysis tools built on the same framework and
+held to the same evidence bar, along with **Moon Phase**, kept as a documented
+null. This also includes **Candlesticks** as a formula-based addition.
 
 ---
 
@@ -61,6 +61,8 @@ linked sections document how each was fitted and what it is worth.
 | ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
 | + | [Elliott Wave](#elliott-wave-beyond-the-video) | Count impulse waves mechanically, bet the next leg |
 | + | [Renko](#renko-beyond-the-video) | Fade the brick that breaks a one-way run |
+| + | Trend Lines | Fade the break of a line drawn through two swing pivots |
+| + | [Gann Angles](#gann-angles-beyond-the-video) | Fan from a pivot — **the angles measure as worthless**; the level earns |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -1538,6 +1540,149 @@ is visible in these numbers**: scoring *Volume - 2yr Train* inside a full-histor
 run gives 55.38% versus 56.80% standalone — 1.4pp purely from where the grid is
 anchored. The tables use the standalone run, which is what the dashboard gives
 you for that date range.
+
+## Gann Angles (beyond the video)
+
+*A fan of fixed-ratio rays from a swing pivot — and a measurement that the rays
+are the part that doesn't work.* W. D. Gann projected lines forward from a
+significant pivot at set price-per-time ratios: `1x1` (his "45° line"), the
+steeper `2x1`…`8x1`, the shallower `1x2`…`1x8`. Price holding above a rising fan
+was strength; losing a ray meant travel to the next.
+
+**The scale problem, and what is done about it.** "45°" is not a property of
+price — it is a property of the chart's aspect ratio. Rescale the y-axis and every
+Gann angle moves. That is the standard and entirely fair criticism of the tool,
+and Gann answered it by fixing a unit per market by hand (a cent a day, a dollar a
+week). BTC has no such convention to inherit, so here:
+
+```
+one price unit per bar  =  unit_atr_mult × ATR(at the anchor bar)
+```
+
+which makes the fan invariant to price level and instrument, and reproducible.
+What survives of Gann is the *shape* of the construction, not his degrees — and
+`unit_atr_mult` becomes a free parameter that has to be fitted like any other.
+
+There is one live fan per side: an **up-fan** on the latest confirmed pivot low
+whose rays act as support, a **down-fan** on the latest pivot high whose rays act
+as resistance. A newer pivot re-anchors it, so there is no discretion about which
+pivot "worked". Each ray is traded on **break** (close pierces it by
+`break_buffer_atr`, then the ray retires) or **bounce** (the extreme reaches it,
+the close holds) — and `predict_direction` takes that at face value or fades it.
+
+**Arming.** A fan's steep rays climb away from the anchor far faster than price
+does, so within a few bars price is mechanically "below" the 8x1 without anything
+having happened. Counting that as a break would manufacture signals out of the
+geometry alone, so a ray is *armed* on the first bar its close is onside and only
+an armed ray can fire. Rays price never reaches never fire — 8x1 alone produces
+148 signals over two years against 14,384 for 1x1.
+
+### The headline finding: the angles do not earn
+
+Read every hit rate against the window's own **flat ceiling**, not 50%: 0.24% of
+5m candles close exactly at their open and lose whichever side you take, so the
+best a 50/50 bettor can do over the last two years is 49.88%.
+
+`unit_atr_mult` sets how fast the 1x1 ray climbs, and it is the only parameter
+here that matters much. Its marginal — mean TRAIN hit across every config sharing
+that value — is monotone, and it points at zero:
+
+| unit | mean hit | unit | mean hit | unit | mean hit |
+|---|---|---|---|---|---|
+| 0.0005 | 55.17% | 0.035 | 53.11% | 0.35 | 50.23% |
+| 0.001 | 55.17% | 0.05 | 52.29% | 0.50 | 50.32% |
+| 0.002 | 55.09% | 0.075 | 52.04% | 0.75 | 50.02% |
+| 0.005 | 54.91% | 0.10 | 51.58% | 1.00 | 50.09% |
+| 0.010 | 54.77% | 0.15 | 51.08% | 1.50 | 49.88% |
+| 0.020 | 54.51% | 0.20 | 50.89% | 2.50 | 49.79% |
+
+A steep fan is worth **nothing at all** — by `unit=1.5` the edge is gone entirely.
+Flatten it and the edge appears, rising to a plateau at `unit ≤ 0.002`.
+
+As `unit → 0` every ray flattens toward a horizontal line through the anchor, so
+what the fitted optimum trades is the break of the last confirmed swing pivot
+**level**. Two checks confirm the fan has genuinely collapsed rather than merely
+flattened:
+
+1. **The ray sets converge.** At `unit=0.0005` the 1x1 ray alone and the
+   three-ray core score 55.23% and 55.11% on 2,588 and 2,617 bets — the same rate
+   on the same trades. Adding six more rays multiplies the bet count by only 2.2×
+   at `unit=0.005`, against 4.5× at `unit=0.2`, because near-flat rays sit on top
+   of one another and fire on the same bars.
+2. **The shipped geometry is flat by inspection.** At `unit=0.002` the 1x1 ray
+   drifts 0.60 ATR across its entire 300-bar life — less than the 0.8 ATR break
+   buffer *Balanced* requires. No meaningful angle is left.
+
+This is the same shape of result [Harmonic Patterns](#harmonic-patterns-beyond-the-video)
+reached about the Fibonacci ratios, and that Trend Lines reached about slope
+(`require_direction=False` won there too): on BTC 5m the mechanically located
+**level** carries the edge and the geometry drawn through it does not.
+
+### Presets
+
+Fitted on the trailing two years. `TRAIN 2024-07-30 → 2025-10-01` for selection
+and only selection; `HOLDOUT 2025-10-01 → 2026-07-30` scored once after the picks
+were frozen; `UNSWEPT 2018-01-01 → 2024-07-30` never consulted. Stage A (24
+configs) settled the family as **break-only, faded** — fading beat taking the
+break by 1.9pp, the third time this repo has landed there. Stage B (5,184 + 864 +
+392 + 84 configs) tuned the rest, read off **marginals** rather than the argmax
+(with ~3–20k bets per config the SE is 0.3–0.9pp, so the max over thousands of
+draws is inflated ~3 SE by chance), and grids whose optimum hit a boundary were
+extended rather than trusted — `unit` twice, buffer once, `pivot_left` once.
+
+Selection rule, fixed before the holdout was read: ≥ 3,000 TRAIN bets; both TRAIN
+halves above their own ceiling; `unit` at the plateau knee and off the grid edge;
+then maximise TRAIN hit. Tiers vary **only** `break_buffer_atr`, so they differ in
+selectivity rather than in a separately-fitted shape.
+
+| Preset | 2yr bets | 2yr hit | edge | train | HOLDOUT | unswept | z |
+|---|---|---|---|---|---|---|---|
+| **PM 5m Volume** | 8,655 | 55.64% | +5.76pp | 55.60% | 55.71% | 58.65% | +10.7 |
+| **PM 5m Balanced** | 5,412 | 56.54% | +6.66pp | 56.86% | 56.05% | 58.88% | +9.8 |
+| PM 5m Selective | 2,604 | 55.65% | +5.76pp | 55.17% | 56.37% | 59.49% | +5.9 |
+| *PM 5m Angled Fan* | 46,345 | 51.55% | +1.67pp | 50.90% | 52.50% | 53.49% | +7.2 |
+
+*PM 5m Angled Fan* is **the control, not a recommendation** — a real, visible fan
+at `unit=0.5` with all nine rays, the best such config on TRAIN. It is not a straw
+man: +1.67pp on 46,345 bets at z +7.2 is a genuine edge, so an actual Gann fan
+does carry something. It is simply worth ~5pp per bet *less* than switching the
+angles off. It ships so the finding above can be checked rather than taken on
+trust.
+
+Per year, *Volume*: 2017 **44.68%** (ceiling 46.50%), then 58.31 / 59.62 / 59.50 /
+58.19 / 59.30 / 58.61 / 55.72 / 56.01 / 55.61% for 2018–2026.
+
+**Why this is probably real.** The holdout matches train on every tier (Volume
++0.11pp, Selective +1.20pp, Balanced −0.81pp). The 2018–2024 columns are
+6,520–22,727 bets from years the sweep never touched, and they score *higher* than
+the fitted window. It is not directional beta — bets run 49.5–50.7% long against a
+49.88% ceiling. Two-year halves are close on every tier (Volume 55.48/55.83,
+Balanced 57.03/56.01, Selective 55.28/56.04). Look-ahead is verified by
+truncation: cutting the series at any signal bar reproduces that signal exactly,
+on all four presets.
+
+⚠️ **Largely redundant with Trend Lines.** Both end up fading the break of a
+mechanically located pivot level — Trend Lines got there by finding flat lines beat
+sloping ones, this by finding flat rays beat angled ones. Trend Lines' Volume tier
+is 21,468 bets at +6.12pp against this file's 8,655 at +5.76pp: a similar edge with
+2.5× the volume. Running both as Combined voters mostly double-counts one signal.
+
+⚠️ **The edge decays.** Every tier scores ~3pp higher across 2018–2024 than over
+the last two years (Volume 58.65% vs 55.64%). The two-year number is the live
+estimate; the unswept column is evidence the mechanism is real, not a forecast.
+
+⚠️ **2017 breaks Volume** — 44.68% against that year's 46.50% ceiling on 1,316
+bets. 2017 was a parabolic run in which broken levels kept going: the standard
+failure mode of a fade, and the same year that breaks Reversal and Harmonic.
+*Balanced* merely matches its 2017 ceiling (46.53 vs 46.50); *Selective* clears it.
+
+⚠️ **`break_buffer_atr` is a noisy dial, not an optimum.** Its curve is not
+monotone: 0.8 is a real +1.20pp step at ~3,400 bets, but the apparent 58.56% at
+buffer 2.0 sits on 1,127 bets (SE 1.5pp) with halves of 55.09/61.64 — noise, and
+the ≥3,000-bet gate is what kept it out. **`max_anchor_age_bars` does nothing
+measurable** (flat to 0.01pp across 100/300/600); it is 300 because a fan must
+expire somewhere, not because 300 was selected. And *Selective* is thin — 2,604
+bets over two years on a 1,036-bet holdout, not enough to separate 55% from 57%.
 
 ## Volume Exhaustion (strategy #7)
 
