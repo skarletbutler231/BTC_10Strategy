@@ -10,8 +10,9 @@ the backend schema.
 
 **All ten of the video's strategies are implemented**, plus additions beyond
 them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Harmonic
-Patterns**, **Momentum Indicators**, **Elliott Wave** and **Renko** — classic
-chart-analysis tools built on the same framework and held to the same evidence
+Patterns**, **Momentum Indicators**, **Elliott Wave**, **Renko**, **Trend
+Lines** and **Support & Resistance** — classic chart-analysis tools built on the
+same framework and held to the same evidence
 bar, along with **Moon Phase**, kept as a documented null.
 This also includes **Candlesticks** as a formula-based addition.
 
@@ -61,6 +62,8 @@ linked sections document how each was fitted and what it is worth.
 | ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
 | + | [Elliott Wave](#elliott-wave-beyond-the-video) | Count impulse waves mechanically, bet the next leg |
 | + | [Renko](#renko-beyond-the-video) | Fade the brick that breaks a one-way run |
+| + | Trend Lines | Sloping lines from two swing pivots — fade the break |
+| + | [Support & Resistance](#support--resistance-beyond-the-video) | Horizontal levels clustered from pivots — fade the break |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -1538,6 +1541,119 @@ is visible in these numbers**: scoring *Volume - 2yr Train* inside a full-histor
 run gives 55.38% versus 56.80% standalone — 1.4pp purely from where the grid is
 anchored. The tables use the standalone run, which is what the dashboard gives
 you for that date range.
+
+## Support & Resistance (beyond the video)
+
+*The oldest tool on the chart, drawn mechanically so it can be tested.* A
+horizontal price the market has repeatedly turned at is the first thing anyone
+learns to draw, and the hardest thing to backtest honestly — normally you see
+which line worked and draw that one. Here the levels build themselves:
+
+- every **confirmed fractal pivot**, high or low, is a candidate price;
+- a pivot within `cluster_tol_atr` × ATR of an existing level **joins** it,
+  pulling the level to the running mean of its members and incrementing its
+  **touch count**; otherwise it starts a new level;
+- only levels with at least `min_touches` members are tradeable — "two touches
+  make a level" is the textbook rule, and it is a parameter here.
+
+Highs and lows go into the **same** pool on purpose. A level's role is decided
+per bar by where price sits: above the previous close it is resistance, below it
+is support. Polarity flip — broken resistance becomes support — therefore falls
+out of the representation instead of being special-cased. Only the **nearest**
+level on each side is evaluated, since a further one cannot be reached without
+passing it.
+
+This is deliberately not [Trend Lines](#strategies), which joins two pivots into
+one *sloping* line and re-anchors as new pivots print. There a level is two
+points and lives until it is replaced; here a level is a **cluster** of any size,
+scored by how many swings confirmed it, and horizontal. The measured overlap
+between the two is small — see below.
+
+| Group | Params |
+|-------|--------|
+| **Pivots** | `pivot_left`, `pivot_right` |
+| **Levels** | `cluster_tol_atr`, `min_touches`, `max_level_age_bars`, `max_levels`, `retire_on_break`, `use_support`, `use_resistance` |
+| **Trigger** | `use_break`, `break_buffer_atr`, `use_bounce`, `zone_tol_atr` |
+| **Decision** | `predict_direction` (With Signal ⋁ Against Signal) |
+| **Volatility** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** | shared |
+
+A fractal pivot at bar *j* is not knowable until bar `j + pivot_right`, so pivots
+are admitted through a **confirmation cursor** that releases one only when the
+scan reaches that bar. No level is ever built from a swing that had not yet
+formed.
+
+### Polymarket presets
+
+Same protocol as Trend Lines and Reversal: train 2024-01 → 2025-10, freeze the
+pick, then score 2025-10 → 2026-07 once. The years 2018–2024 were never loaded by
+any sweep stage. **Read the hit rates against 49.76%, not 50%** — 0.48% of 5m
+candles close exactly at their open and lose whichever side you take.
+
+| preset | bets | hit | edge | train | HOLDOUT | UNSWEPT | z |
+|--------|-----:|----:|-----:|------:|--------:|--------:|--:|
+| **PM 5m Level Break Volume** | 40,578 | **56.04%** | +6.28pp | 54.18% | 55.56% | 57.59% | **+25.3** |
+| PM 5m Level Break Confirmed | 16,772 | 55.15% | +5.39pp | 55.08% | 54.39% | 55.72% | +14.0 |
+
+Stage A (36 configs) settled the family before any tuning, the same way this repo
+keeps settling structure events: **break only, traded Against Signal** — 52.84%
+on train against 47.42% for taking the break. **Bounces lost outright**, every
+bounce-enabled variant landing between 49.8% and 50.8%; the "level held" event
+carries nothing here. Stage B (6,480 configs) then tuned pivots, clustering,
+touches and buffer under a rule fixed in advance (≥3,000 train bets, both train
+halves >50%, `pivot_left` off the grid boundary, then maximise train hit), and
+Stage C (1,536) re-ran the winners with `max_levels` and `max_level_age_bars`
+extended past the grid they had pinned to. Those two axes turned out not to
+matter — the whole rule-passing top 20 spans 0.9pp across every value of them —
+so the tie was broken by taking the config *interior* on both rather than the one
+on the new edge, at a cost of 0.53pp of train hit (~0.6 SE at n = 3,400).
+
+**Train hit rate ranked the two presets backwards.** *Confirmed* won on train
+(55.08% vs 54.18%) and is what the selection rule actually picked. Out of sample
+it is the weaker of the two **on both axes at once** — *Volume* carries 2.4× the
+bets *and* a higher hit rate on the holdout, on the unswept years, and over the
+full record. Both ship; *Volume* is the pick.
+
+### Three checks, all run after the picks were frozen
+
+- **The mirror is symmetric.** Taking the break instead of fading it scores
+  43.67% / 44.50% — as far *below* the ceiling as these are above it. A selection
+  artifact would not produce a clean sign flip on the same bets.
+- **No look-ahead.** Re-deriving 40 sampled signals per preset on the series
+  truncated *at* the signal bar reproduced every one: **0 mismatches**.
+- **It is not Trend Lines relabelled.** Against that strategy's own presets only
+  **25–30%** of these signals are shared (Jaccard 21–24%), and the 28,512 bets
+  *Volume* fires that Trend Lines never does score **55.70%** on their own. The
+  exclusive half carries the edge, so this is a separate signal source rather
+  than a sloping-line result rediscovered horizontally.
+
+It is also not directional beta: bets run 47.2% long / 52.8% short and both sides
+win (long 56.57%, short 55.56%) while 49.6–50.5% of all 5m candles close up in
+every year.
+
+**Where it fails.** 2017 (partial year, Aug–Dec, thin early Binance liquidity) is
+the one losing year for *Volume* at 44.31%, **2.19pp below** its own 46.50%
+ceiling. Every full year 2018–2026 clears, worst 53.94% in 2024 (+4.05pp). That
+is the usual failure mode of a fade — a sustained one-way trend, in which broken
+levels keep going — and it is the same year Trend Lines and Reversal fail.
+*Confirmed* is the more robust of the two: it clears its ceiling in **every** year
+including 2017 (+2.72pp), at 41% of the volume.
+
+**The buffer is not a clean dial**, unlike Trend Lines'. On the full record it
+dips before recovering, so `break_buffer_atr = 0.0` is a genuine peak rather than
+the low end of a ramp — 56.04% at 40,578 bets, falling to 54.85% at 0.5, back to
+55.99% at 1.2 on a quarter of the volume. Nothing beats 0.0 at any volume, so
+both presets ship there.
+
+**Not swept: the 1-minute interval.** `pivot_left` counts *bars*, so these
+presets' 20/30 are 100–150 **minutes** on 5m and would be 20–30 minutes on 1m — a
+different setup entirely. Trend Lines and Reversal both needed a separate 1m
+sweep for exactly this reason; do that before running these on 1m tape.
+
+As everywhere else in this repo, the EV per \$1 the dashboard reports at 0.50
+odds assumes a 0.50 fill, which a real Polymarket book will not offer on a
+directional 5m market. **Hit rate is the finding**; the EV figure is an upper
+bound.
 
 ## Volume Exhaustion (strategy #7)
 
