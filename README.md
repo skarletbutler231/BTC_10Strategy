@@ -695,6 +695,64 @@ much larger out-of-sample check.
 | PM 5m BOS Volume | 32,630 | 56.60% | 58.08% | 54.02% | 54.83% | 54.07% (2024) |
 | PM 5m BOS Balanced | 22,386 | 56.84% | 58.09% | 55.09% | 55.86% | 53.67% (2024) |
 
+#### 1-minute presets
+
+Swept separately, because **the parameters do not carry over**. `pivot_left`
+counts *bars*, so the 5m winner's 30 is 150 **minutes**. Run at the default
+`pivot_left=3` the whole family reads as dead on 1m tape (BOS/Continuation
+scores 49.26% on train); pushing the left window out to the same wall-clock
+scale restores it, and the holdout then rises monotonically with it — 51.31% at
+`pivot_left=20` up to 53.73% at 300.
+
+| preset | bets | hit | 2018-23 (unswept) | train | HOLDOUT |
+|--------|-----:|----:|------:|------:|--------:|
+| PM 1m BOS Volume | 67,441 | 52.03% | 53.19% | 51.76% | 53.15% |
+| PM 1m BOS Balanced | 58,099 | 52.22% | 53.46% | 51.83% | 53.83% |
+
+**Read these against 48.44%, not 50%.** On 1m tape **3.12%** of candles close
+exactly at their open, and a flat candle loses whichever side you took, so the
+ceiling for *any* 50/50 bettor is `(1 - flat) / 2 = 48.44%`. Balanced's 52.22%
+is therefore **+3.78pp** over a coin flip (z = +18.2), not +2.2pp. The flat rate
+swings hard by year — 33.58% in 2017, 0.12% in 2021, 3.46% in 2025 — so a
+per-year hit rate only means anything against that year's own ceiling.
+
+Measured that way, Balanced is negative in the first two years and positive in
+every year since:
+
+| year | edge vs ceiling | | year | edge vs ceiling |
+|---|---:|---|---|---:|
+| 2017 | −3.11pp (z −3.1) | | 2022 | +6.21pp (z +9.6) |
+| 2018 | −2.35pp (z −3.4) | | 2023 | +6.60pp (z +9.7) |
+| 2019 | +5.07pp (z +7.2) | | 2024 | +2.54pp (z +4.6) |
+| 2020 | +5.26pp (z +8.1) | | 2025 | +4.51pp (z +8.4) |
+| 2021 | +3.34pp (z +5.8) | | 2026 | +5.08pp (z +6.6) |
+
+2017–2018 is the same failure mode the 5m presets show, and it is coherent:
+these presets **fade** structure breaks, and both the 2017 parabolic run and the
+2018 crash were sustained one-way trends where breaks kept going. Expect losses
+in a strongly trending regime.
+
+> **Why these fade the break.** Measured as a reversal *detector* at face value
+> (`predict_direction = Reversal`, symmetric ±1 ATR barriers), Break of Structure
+> scores **45.43%** on 5m and **47.11%** on 1m — well below chance, 13.9σ below on
+> 5m. As a reversal call it is reliably wrong, which is exactly why the presets
+> above trade it as `Continuation`. Candlestick patterns were the only detector
+> above chance (50.71% / 51.83%), but no detection preset is shipped.
+
+**On the data source.** `btc_1s.db` (Binance 1s klines, 2026-02 → 2026-07,
+15,292,800 rows, gapless) was evaluated as the 1m source and **rejected**.
+Aggregating its per-second open/close reproduces open and close essentially
+exactly — close matched on 10,080/10,080 sample bars — but understates the true
+bar range by ~4%, since per-second open/close cannot see inside a second: 39% of
+bars miss the real extreme. Reversal reads high/low for wicks, pivots, ATR and
+the location gate, and `market.db` has real 1m klines that are 100% complete
+over the same window and span 9 years instead of 6 months.
+
+It was used as a **robustness check** instead, and the presets survive it. Over
+2026-02 → 07, rebuilding the bars from 1s changes Volume 53.33% → 52.96% and
+Balanced 53.44% → 53.58%, both well inside their 95% intervals — so the edge
+does not depend on exact wick extremes.
+
 Both are **Break of Structure traded as Continuation** — i.e. *fade* the break.
 The evidence that this is not a curve fit: the never-swept 2018–2023 years score
 *higher* than the window that was optimised on, the holdout beats train for both

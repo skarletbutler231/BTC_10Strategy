@@ -344,21 +344,46 @@ def pivots(candles: list[dict], left: int, right: int):
     read ``pivot_*[j]`` while scanning any bar earlier than ``j + right`` — see
     the confirmation cursor in strategies/reversal.py for the pattern that
     enforces this.
+
+    Computed in O(n) with two monotonic deques — the same technique
+    :func:`rolling_swing` uses. Bar j is a pivot high exactly when it attains
+    the maximum of the window ``[j-left, j+right]``, so one sliding-window
+    maximum answers it for every bar at once. The naive per-bar rescan is
+    O(n*(left+right)), which is fine at ``left=3`` but unusable on 1-second
+    bars where matching a 150-minute swing needs ``left=9000``.
     """
     n = len(candles)
     ph: List[Num] = [None] * n
     pl: List[Num] = [None] * n
     if left < 0 or right < 0:
         return ph, pl
+    width = left + right + 1
+    if n < width:
+        return ph, pl
     highs = [c["high"] for c in candles]
     lows = [c["low"] for c in candles]
-    for j in range(left, n - right):
-        lo_b, hi_b = j - left, j + right + 1
-        h, l = highs[j], lows[j]
-        if all(highs[k] <= h for k in range(lo_b, hi_b)):
-            ph[j] = h
-        if all(lows[k] >= l for k in range(lo_b, hi_b)):
-            pl[j] = l
+    dmax: deque = deque()   # indices, highs decreasing front -> back
+    dmin: deque = deque()   # indices, lows increasing front -> back
+    for end in range(n):
+        h, l = highs[end], lows[end]
+        while dmax and highs[dmax[-1]] <= h:
+            dmax.pop()
+        dmax.append(end)
+        while dmin and lows[dmin[-1]] >= l:
+            dmin.pop()
+        dmin.append(end)
+        start = end - width + 1
+        if dmax[0] < start:
+            dmax.popleft()
+        if dmin[0] < start:
+            dmin.popleft()
+        if end >= width - 1:
+            # the window [start, end] is centred on j, `right` bars back
+            j = end - right
+            if highs[dmax[0]] == highs[j]:
+                ph[j] = highs[j]
+            if lows[dmin[0]] == lows[j]:
+                pl[j] = lows[j]
     return ph, pl
 
 

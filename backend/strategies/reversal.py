@@ -580,3 +580,70 @@ PRESETS: dict = {
     # a 30-bar left window only calls a genuinely significant swing a pivot.
     "PM 5m BOS Balanced": {**_BOS_COMMON, "pivot_left": 30, "pivot_right": 1},
 }
+
+# ---------------------------------------------------------------------------
+# 1-MINUTE presets. Swept separately, because the parameters do NOT carry over:
+# `pivot_left` counts BARS, so the 5m winner's 30 is 150 *minutes*. Run at the
+# default pivot_left=3 the whole family reads as dead on 1m tape (Break of
+# Structure / Continuation scores 49.26% on train). Pushing the left window out
+# to the same wall-clock scale restores it, and the holdout then rises
+# monotonically with it — 51.31% at pivot_left=20 up to 53.73% at 300.
+#
+# Data: market.db BTCUSDT 1m, which has REAL high/low and is 100% complete over
+# the window. btc_1s.db was evaluated as the source and rejected: aggregating
+# its per-second open/close reproduces open and close essentially exactly
+# (close matched on 10,080/10,080 sample bars) but understates the true bar
+# range by ~4%, because per-second open/close cannot see inside a second — 39%
+# of bars miss the real extreme. Reversal reads high/low for wicks, pivots, ATR
+# and the location gate, so the real klines win. The 1s reconstruction was used
+# instead as a robustness check, and the presets survive it (see below).
+#
+# Protocol as before — train 2024-01..2025-10, holdout 2025-10..2026-07 scored
+# once after freezing, and 2018-2023 never loaded by the sweep at all.
+#
+#   preset          bets     hit    2018-23   train   HOLDOUT     z
+#   1m BOS Volume  67,441  52.03%    53.19%  51.76%   53.15%   10.5
+#   1m BOS Balanced 58,099 52.22%    53.46%  51.83%   53.83%   10.7
+#
+# READ THE HIT RATES AGAINST 48.44%, NOT 50%. On 1m tape 3.12% of candles close
+# exactly at their open, and a flat candle loses whichever side you took, so the
+# ceiling for ANY 50/50 bettor is (1 - flat)/2 = 48.44%. The Balanced preset's
+# 52.22% is therefore +3.78pp over a coin flip (z = +18.2), not +2.2pp. The flat
+# rate swings hard by year — 33.58% in 2017, 0.12% in 2021, 3.46% in 2025 — so
+# per-year hit rates are only interpretable against that year's own ceiling.
+#
+# WHERE IT FAILS. Measured against each year's ceiling, Balanced is NEGATIVE in
+# the first two years and positive in every year since:
+#
+#   2017  -3.11pp (z -3.1)      2022  +6.21pp (z  +9.6)
+#   2018  -2.35pp (z -3.4)      2023  +6.60pp (z  +9.7)
+#   2019  +5.07pp (z +7.2)      2024  +2.54pp (z  +4.6)
+#   2020  +5.26pp (z +8.1)      2025  +4.51pp (z  +8.4)
+#   2021  +3.34pp (z +5.8)      2026  +5.08pp (z  +6.6)
+#
+# 2017-2018 is the same failure mode the 5m presets show, and it is coherent:
+# these presets FADE structure breaks, and both the 2017 parabolic run and the
+# 2018 crash were sustained one-way trends in which breaks kept going. Expect
+# losses in a strongly trending regime. 2017 also had 33.58% flat candles on
+# thin early Binance liquidity, which caps any strategy near 33%.
+#
+# ROBUSTNESS. Re-running both presets on 1m bars rebuilt from btc_1s.db
+# (synthetic high/low, ~4% narrower ranges) over 2026-02..07 changes nothing
+# material: Volume 53.33% -> 52.96%, Balanced 53.44% -> 53.58%, both well inside
+# their 95% intervals. The edge does not depend on exact wick extremes.
+_BOS_1M_COMMON = {
+    **_BOS_COMMON,
+    # A pivot must dominate a wall-clock window comparable to the 5m presets',
+    # and 1m bars are individually far smaller, so both the pivot reach and the
+    # volatility floor are rescaled.
+    "max_pivot_gap": 300,
+    "atr_pct_min": 0.02, "atr_pct_max": 1.5,
+}
+
+PRESETS.update({
+    # 67,441 bets, 52.03% hit vs a 48.44% ceiling; 2018-23 53.19%, holdout 53.15%.
+    "PM 1m BOS Volume": {**_BOS_1M_COMMON, "pivot_left": 90, "pivot_right": 2},
+    # 58,099 bets, 52.22% hit vs a 48.44% ceiling; 2018-23 53.46%, holdout 53.83%.
+    # Best hit of the two and the better holdout; a 150-bar (2.5 h) left window.
+    "PM 1m BOS Balanced": {**_BOS_1M_COMMON, "pivot_left": 150, "pivot_right": 1},
+})
