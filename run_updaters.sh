@@ -5,18 +5,23 @@
 # 30-minute job never block one another, and a rare slow run is a no-op instead
 # of colliding with the next tick. Cron schedules each job at its own cadence:
 #
-#   * * * * *    <proj>/run_updaters.sh stream  >> <proj>/data/ingest_stream.log 2>&1
-#   */30 * * * * <proj>/run_updaters.sh binance >> <proj>/data/binance_ingest.log 2>&1
-#   40 1 * * *   <proj>/run_updaters.sh pmdata  >> <proj>/data/pmdata_ingest.log 2>&1
+#   * * * * *    <proj>/run_updaters.sh stream    >> <proj>/data/ingest_stream.log 2>&1
+#   * * * * *    <proj>/run_updaters.sh binance1s >> <proj>/data/binance_1s.log 2>&1
+#   */30 * * * * <proj>/run_updaters.sh binance   >> <proj>/data/binance_ingest.log 2>&1
+#   40 1 * * *   <proj>/run_updaters.sh pmdata    >> <proj>/data/pmdata_ingest.log 2>&1
 #
 # Jobs:
-#   stream   Chainlink BTCUSD_CL candles + Polymarket pm_window/pm_quote,
-#            tailed from the pmqb capture (backend.data.ingest_stream).
-#   binance  Binance BTCUSDT 1m candles from data.binance.vision (backend.data.ingest).
-#   pmdata   Polymarket L2 order book from pmdata.dev (backend.data.ingest_pmdata).
-#            Daily, not per-minute: PMData publishes one archive per day once the
-#            day has closed, so this picks up yesterday and is a no-op otherwise.
-#   all      run all three, sequentially (manual convenience; default).
+#   stream     Chainlink BTCUSD_CL candles + Polymarket pm_window/pm_quote,
+#              tailed from the pmqb capture (backend.data.ingest_stream).
+#   binance1s  Binance BTCUSDT *1-second* candles, REST catch-up from the newest
+#              stored second to now (backend.data.binance_1s_stream --backfill-only).
+#              Per-minute rather than a daemon, so it needs no supervision; the
+#              cost is that the 1s series trails now by up to ~a minute.
+#   binance    Binance BTCUSDT 1m candles from data.binance.vision (backend.data.ingest).
+#   pmdata     Polymarket L2 order book from pmdata.dev (backend.data.ingest_pmdata).
+#              Daily, not per-minute: PMData publishes one archive per day once the
+#              day has closed, so this picks up yesterday and is a no-op otherwise.
+#   all        run all four, sequentially (manual convenience; default).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -29,6 +34,10 @@ fi
 STREAM_LOCK=/tmp/btc10_ingest_stream.lock
 BINANCE_LOCK=/tmp/btc10_binance_ingest.lock
 PMDATA_LOCK=/tmp/btc10_pmdata_ingest.lock
+# Deliberately the same path binance_1s_stream locks internally, so a manually
+# started daemon and this cron job exclude each other. The child therefore runs
+# --no-lock: it would otherwise deadlock against the flock we already hold here.
+BINANCE1S_LOCK=/tmp/btc10_binance_1s_stream.lock
 
 # Catch up at most this many days per pmdata run, so a long outage backfills
 # steadily instead of pulling tens of GB in one go.
@@ -38,6 +47,9 @@ pmdata_args=(--from "$(date -u -d "${PMDATA_LOOKBACK_DAYS} days ago" +%F)" --wor
 case "${1:-all}" in
   stream)
     exec /usr/bin/flock -n "$STREAM_LOCK" python3 -m backend.data.ingest_stream ;;
+  binance1s)
+    exec /usr/bin/flock -n "$BINANCE1S_LOCK" \
+      python3 -m backend.data.binance_1s_stream --backfill-only --no-lock ;;
   binance)
     exec /usr/bin/flock -n "$BINANCE_LOCK" python3 -m backend.data.ingest ;;
   pmdata)
@@ -45,8 +57,10 @@ case "${1:-all}" in
   all)
     # `|| true`: a held lock (job already running) is an expected skip, not a failure.
     /usr/bin/flock -n "$STREAM_LOCK"  python3 -m backend.data.ingest_stream || true
+    /usr/bin/flock -n "$BINANCE1S_LOCK" \
+      python3 -m backend.data.binance_1s_stream --backfill-only --no-lock || true
     /usr/bin/flock -n "$BINANCE_LOCK" python3 -m backend.data.ingest || true
     /usr/bin/flock -n "$PMDATA_LOCK"  python3 -m backend.data.ingest_pmdata "${pmdata_args[@]}" || true ;;
   *)
-    echo "usage: $0 {stream|binance|pmdata|all}" >&2; exit 2 ;;
+    echo "usage: $0 {stream|binance1s|binance|pmdata|all}" >&2; exit 2 ;;
 esac

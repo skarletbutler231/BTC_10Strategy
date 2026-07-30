@@ -1,4 +1,9 @@
 fastapi>=0.110
 uvicorn>=0.27
-# No other runtime deps: Binance access uses the stdlib (urllib) and all
+# No other runtime deps: Binance REST access uses the stdlib (urllib) and all
 # indicators / the backtest engine are pure Python.
+
+# Optional — only backend.data.binance_1s_stream needs it, for the per-second
+# Binance kline websocket. That module's --poll mode is a stdlib-only REST
+# fallback, so the rest of the platform still installs without this.
+websockets>=12.0
