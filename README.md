@@ -65,6 +65,7 @@ linked sections document how each was fitted and what it is worth.
 | + | Trend Lines | Sloping lines from two swing pivots — fade the break |
 | + | [Support & Resistance](#support--resistance-beyond-the-video) | Horizontal levels clustered from pivots — fade the break |
 | + | [Gann Angles](#gann-angles-beyond-the-video) | Fan from a pivot — **the angles measure as worthless**; the level earns |
+| + | [Oscillators](#oscillators-beyond-the-video) | One banded oscillator, five textbook rules — **only the band entry earns** |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -1799,6 +1800,164 @@ measurable** (flat to 0.01pp across 100/300/600); it is 300 because a fan must
 expire somewhere, not because 300 was selected. And *Selective* is thin — 2,604
 bets over two years on a 1,036-bet holdout, not enough to separate 55% from 57%.
 
+## Oscillators (beyond the video)
+
+*Five textbook rules on one oscillator — four of them measure as worthless.* An
+oscillator in the classic sense is a **bounded** indicator: it cannot trend away,
+so it must turn, and "70" means the same thing in 2017 as in 2026. That
+boundedness is the premise behind every rule the books teach, and this strategy
+implements them all so they can be raced against each other:
+
+- **Zone Entry** — the reading crosses *into* the overbought / oversold band;
+- **Zone Exit** — it crosses back *out* (the rule most books actually
+  recommend, on the grounds that overbought can stay overbought);
+- **Signal Cross** — it crosses its own moving average;
+- **Centerline Cross** — it crosses the midpoint, a regime flip;
+- **Failure Swing** — Wilder's own pattern, and the one he singled out as a
+  signal in its own right: an extreme, a pullback to a trough, a rally that
+  fails to reclaim the extreme, then the break of that trough.
+
+Seven oscillators are rescaled onto a common **0–100** axis, so the band levels,
+the signal line and the failure-swing logic are written once and the oscillator
+becomes a parameter instead of a fork in the code: RSI, Stochastic %K, Stoch RSI
+%K and the Ultimate Oscillator are native; Williams %R is `%R + 100`; CCI and TSI
+map through `50 + 50 × clamp(x / scale)`.
+
+This is deliberately not [Momentum Indicators](#momentum-indicators-beyond-the-video),
+which averages nine oscillators into a composite and trades that. Here exactly
+**one** oscillator is read and the question is which *rule* pays — the axis a
+composite hides. It is not [Reversal](#reversal-beyond-the-video) either, whose
+oscillator leg is divergence against price; nothing here looks at price shape.
+
+| Group | Params |
+|-------|--------|
+| **Oscillator** | `osc_type`, `osc_length`, `smooth_k`, `signal_length` |
+| **Zones** | `overbought`, `oversold` |
+| **Trigger** | `trigger_mode`, `fs_max_bars` |
+| **Decision** | `predict_direction` (Fade ⋁ Follow) |
+| **Volatility** | `vol_atr_length`, `atr_pct_min`, `atr_pct_max` |
+| **Trend Filter** / **Window** | shared |
+
+### Polymarket presets
+
+Train 2024-07-31 → 2025-11-01, freeze the picks, then score 2025-11-01 →
+2026-07-30 once; 2017-08 → 2024-07 was never loaded by any sweep stage. 2,040
+configurations in three stages — 210 structural (oscillator × trigger ×
+direction × length), 1,680 tuning length/smoothing/band inside the winning
+family, 150 testing the ATR band and trend filter on the frozen winners.
+Selection was mechanical: train bets ≥ the tier floor, **both** halves of train
+above 52%, `osc_length` off the grid boundary, then highest train hit.
+
+**Read the hit rates against 49.52%, not 50%** — 0.48% of 5m candles close
+exactly at their open and lose whichever side you take.
+
+| preset | oscillator | bets | hit | train | HOLDOUT | UNSWEPT | z |
+|--------|-----------|-----:|----:|------:|--------:|--------:|--:|
+| PM 5m Volume | Stochastic 11, band 10/90 | 56,853 | 56.15% | 54.35% | 55.03% | 56.75% | **+29.3** |
+| **PM 5m Balanced** | **RSI 14, band 30/70** | 20,988 | **56.95%** | 56.07% | 55.91% | 57.25% | +20.1 |
+| PM 5m Selective | TSI 7, band 10/90 | 5,247 | 56.93% | 56.90% | 55.74% | 57.08% | +10.0 |
+
+**Balanced is the pick — and it is Wilder's published RSI defaults, unchanged.**
+14 bars, a 70/30 band, no smoothing. The sweep was free to choose among six
+oscillators, ten lengths, four smoothings and seven band widths, and what it
+landed on at the middle tier is the setting printed in the 1978 book.
+
+### The rule the textbooks recommend is the one that loses
+
+Best train config per trigger (Fade, ≥1,000 bets):
+
+| trigger | train | the same RSI settings, on the holdout |
+|---------|------:|-------------------------------------:|
+| **Zone Entry** | **55.84%** | **55.97%** |
+| Zone Exit | 53.46% | 50.49% |
+| Failure Swing | 52.33% | 45.76% |
+| Signal Cross | ~50% | ~50% |
+| Centerline Cross | ~50% | ~50% |
+
+Out of sample the gap widens rather than closing. This is worth dwelling on,
+because **the band exit is the rule the books actually teach** — *overbought is
+not a sell signal until the oscillator crosses back down* — and it is precisely
+the wait that destroys the edge. By the time the reading has climbed back out of
+the band, the reversion it was predicting has already happened. So has the entire
+finding.
+
+Wilder's **failure swing** is the sharpest negative here: 53.88% on train,
+**45.76%** on the holdout. It is the most elaborate pattern in the family and it
+is a curve fit. The two crossover triggers are noise at every setting tried —
+neither the signal line nor the centreline carries anything at 5 minutes.
+
+### Both marginals are monotone
+
+Pooled over all 1,680 stage-2 configs, train hit rises with the band and with
+smoothing, without a single inversion:
+
+| band | 65 | 70 | 75 | 80 | 85 | 90 | 95 |
+|------|---:|---:|---:|---:|---:|---:|---:|
+| train hit | 50.72% | 50.88% | 51.15% | 51.31% | 51.45% | 51.78% | 52.07% |
+
+| smoothing | 1 | 2 | 3 | 5 |
+|-----------|--:|--:|--:|--:|
+| train hit | 50.45% | 51.53% | 51.68% | 51.79% |
+
+Rarer and cleaner readings are better readings. A monotone marginal cannot be
+produced by one lucky cell, so this is the result here that carries weight
+independent of the selection rule.
+
+**RSI is the best oscillator; Stoch RSI is the worst.** Pooled over stage 2,
+train / holdout: RSI 53.51 / 54.16, TSI 53.11 / 53.48, Ultimate 52.35 / 53.67,
+CCI 51.82 / 52.32, Stochastic 51.10 / 52.50, Stoch RSI 50.23 / 51.26. Ranking the
+RSI *of* the RSI below plain RSI is the expected direction — re-ranging an
+already-bounded reading against its own range adds noise, not information — but
+it is worth having measured rather than assumed.
+
+**Stochastic %K and Williams %R are the same number**, verified to 1.4 × 10⁻¹⁴
+over 200,000 bars: `%K = 100(c−LL)/(HH−LL)` and `%R + 100` are the same
+expression. Both are offered because both get asked for by name; picking between
+them is a choice of label.
+
+**The trend filter buys nothing** — pooled over stage 3 it spans 54.59–55.13% on
+train with no ordering that survives the holdout, and for RSI the *Against Trend
+/ SMA50* rows are byte-identical to the unfiltered ones, because fading an
+overbought extreme is definitionally against the short-term trend and that filter
+passes 100% of signals. The ATR band is likewise flat (~1pp across everything
+tried), so the repo default 0.05–1.5 is kept rather than fitted.
+
+### Three checks, all run after the picks were frozen
+
+- **The mirror is symmetric.** Taking the extreme at face value instead of fading
+  it scores 43.27% / 42.85% / 42.61% — as far below the ceiling as the presets
+  are above it. A selection artifact does not produce a clean sign flip on the
+  same bets.
+- **No look-ahead.** The prefix test (signals from `candles[:m]` must equal the
+  whole-series signals falling before *m*) passes with **0 mismatches** across
+  all 7 oscillators × 5 triggers at three cut points.
+- **It is not Momentum Indicators relabelled.** Against that strategy's Balanced
+  preset only 9–22% of these signals are shared (Jaccard 6–16%), and the
+  exclusive majority scores 55.9–56.7% alone. Against CCI Williams: 14–19%
+  shared, exclusive half 55.6–56.6%. The edge lives in the bets the other
+  strategies never place.
+
+It is not directional beta either: bets split 45–50% long and both sides win
+(Balanced: long 57.98%, short 55.93%) while 49.6–50.5% of all 5m candles close up
+in every year.
+
+**Where it fails.** 2017 (partial year, Aug–Dec, thin early Binance liquidity) is
+the one losing year — 47.4% / 47.2% / 52.0%. Fading an extreme loses in a
+parabolic run, which is what 2017 was; this is the same year that breaks Momentum
+Indicators, Support & Resistance and Reversal, so treat it as one shared regime
+risk rather than four warnings. Every full year 2018–2026 clears: worst 54.4%
+(Volume), 55.3% (Balanced), 52.7% (Selective). **The edge decays** — 2018–2023
+runs 55.2–60.4%, 2024–2026 runs 52.7–58.1%, and the recent figures are the live
+estimate.
+
+**Not swept: the 1-minute interval.** `osc_length` counts *bars*, so Balanced's
+14 is 70 minutes on 5m and would be 14 minutes on 1m — a different setup that
+needs its own sweep.
+
+As everywhere else here, the EV per \$1 the dashboard reports assumes a 0.50 fill,
+which a real Polymarket book will not offer on a directional 5m market. **Hit
+rate is the finding**; the EV figure is an upper bound.
+
 
 ## Volume Exhaustion (strategy #7)
 
@@ -2126,7 +2285,7 @@ should be offered as a Quick Setup voter.
 
 All ten of the video's strategies are implemented; `Fair Value Gap`,
 `Fib Retracement`, `Candlesticks`, `Reversal`, `Harmonic Patterns`,
-`Momentum Indicators`, `Elliott Wave` and `Renko` are additions beyond them,
+`Momentum Indicators`, `Elliott Wave`, `Renko` and `Oscillators` are additions beyond them,
 held to the same evidence bar. A strategy whose
 signals depend on structure that is only knowable *after* the fact (a swing
 pivot, a Renko brick) must record when it became knowable and gate on that — see

@@ -3,8 +3,8 @@
 This is the ONLY place you touch to enable a new strategy in the dashboard.
 All ten of the video's strategies are implemented, plus Fair Value Gap, Fib
 Retracement, Candlesticks, Reversal, Harmonic Patterns, Momentum Indicators,
-Moon Phase, Elliott Wave, Renko, Trend Lines, Support & Resistance and Gann
-Angles (additions beyond the video). Filters shared between strategies
+Moon Phase, Elliott Wave, Renko, Trend Lines, Support & Resistance, Gann
+Angles and Oscillators (additions beyond the video). Filters shared between strategies
 (trading window, trend filter, MA/source helpers) live in common.py.
 """
 
@@ -23,6 +23,7 @@ from .jump_exhaustion import JumpExhaustion
 from .momentum import Momentum
 from .moon_phase import MoonPhase
 from .multi_horizon import MultiHorizon
+from .oscillators import Oscillators
 from .regime_switch import RegimeSwitch
 from .renko import Renko
 from .reversal import Reversal
@@ -59,6 +60,7 @@ register(Renko())
 register(TrendLines())
 register(SupportResistance())
 register(Gann())
+register(Oscillators())
 
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
@@ -88,3 +90,4 @@ register(Combined())
 #      Trend Lines        (trend_lines.py)        <-- DONE
 #      Support & Resistance (support_resistance.py) <-- DONE
 #      Gann Angles        (gann.py)               <-- DONE
+#      Oscillators        (oscillators.py)        <-- DONE

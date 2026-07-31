@@ -577,6 +577,51 @@ def stochastic(candles: list[dict], k_length: int, d_length: int):
     return k, d
 
 
+def stoch_rsi(candles: list[dict], rsi_length: int, stoch_length: int,
+              k_smooth: int = 3, d_smooth: int = 3):
+    """Stochastic RSI -> (%K, %D), each 0-100 and index-aligned.
+
+    The Stochastic formula applied to RSI instead of to price: where RSI sits
+    inside its OWN `stoch_length`-bar range. RSI rarely visits 0 or 100, so it
+    spends most of its life in the middle of its nominal scale; re-ranging it
+    against its recent extremes is what makes an "RSI extreme" comparable across
+    a quiet week and a violent one. The cost is that it is far noisier than RSI,
+    which is why %K is smoothed before use.
+
+    A flat RSI window (max == min) yields a neutral 50 rather than a divide-by-
+    zero. `k_smooth`/`d_smooth` of 1 mean no smoothing.
+    """
+    n = len(candles)
+    k: List[Num] = [None] * n
+    d: List[Num] = [None] * n
+    if rsi_length <= 0 or stoch_length <= 0:
+        return k, d
+    r = rsi(candles, rsi_length)
+    raw: List[Num] = [None] * n
+    for i in range(n):
+        seg = r[i - stoch_length + 1: i + 1]
+        if i < stoch_length - 1 or any(v is None for v in seg):
+            continue
+        hi, lo = max(seg), min(seg)
+        span = hi - lo
+        raw[i] = 50.0 if span <= 0 else 100.0 * (r[i] - lo) / span
+
+    def _smooth(series: List[Num], period: int) -> List[Num]:
+        if period <= 1:
+            return list(series)
+        start = next((i for i, v in enumerate(series) if v is not None), n)
+        out: List[Num] = [None] * n
+        if start >= n:
+            return out
+        for j, v in enumerate(sma([float(x) for x in series[start:]], period)):
+            out[start + j] = v
+        return out
+
+    k = _smooth(raw, k_smooth)
+    d = _smooth(k, d_smooth)
+    return k, d
+
+
 def macd(values: List[float], fast: int, slow: int, signal: int):
     """MACD -> (macd_line, signal_line, histogram), each index-aligned.
 
