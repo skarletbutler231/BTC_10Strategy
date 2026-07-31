@@ -39,7 +39,7 @@ from .base import Param, ParamGroup, Signal, Strategy
 SUB_IDS = ["rsi_bb", "stoch_wick", "atr_devexh", "bb_squeeze", "zscore_ms",
            "regime_switch", "volume_exhaustion", "jump_exhaustion",
            "cci_williams", "multi_horizon", "fair_value_gap", "fib_retracement",
-           "candlesticks", "reversal", "harmonic", "momentum",
+           "candlesticks", "reversal", "harmonic", "choch", "momentum",
            "elliott_wave", "renko", "trend_lines", "support_resistance",
            "gann", "oscillators"]
 # moon_phase is deliberately absent: it was measured and found to have no edge

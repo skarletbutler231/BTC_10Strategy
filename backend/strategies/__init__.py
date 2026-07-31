@@ -13,6 +13,7 @@ from .atr_devexh import AtrDevExh
 from .bb_squeeze import BBSqueeze
 from .candlesticks import Candlesticks
 from .cci_williams import CCIWilliams
+from .choch import Choch
 from .combined import Combined
 from .elliott_wave import ElliottWave
 from .fair_value_gap import FairValueGap
@@ -53,6 +54,7 @@ register(FibRetracement())
 register(Candlesticks())
 register(Reversal())
 register(Harmonic())
+register(Choch())
 register(Momentum())
 register(MoonPhase())
 register(ElliottWave())
@@ -83,6 +85,7 @@ register(Combined())
 #      Candlesticks       (candlesticks.py)       <-- DONE
 #      Reversal           (reversal.py)           <-- DONE
 #      Harmonic Patterns  (harmonic.py)           <-- DONE
+#      CHoCH              (choch.py)              <-- DONE
 #      Momentum Indicators(momentum.py)           <-- DONE
 #      Moon Phase         (moon_phase.py)         <-- DONE (folklore; see its presets)
 #      Elliott Wave       (elliott_wave.py)       <-- DONE

@@ -10,7 +10,7 @@ the backend schema.
 
 **All ten of the video's strategies are implemented**, plus additions beyond
 them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Harmonic
-Patterns**, **Momentum Indicators**, **Elliott Wave**, **Renko**, **Trend Lines**,
+Patterns**, **Momentum Indicators**, **CHoCH**, **Elliott Wave**, **Renko**, **Trend Lines**,
 **Support & Resistance** and **Gann Angles** — classic chart-analysis tools built
 on the same framework and held to the same evidence bar, along with **Moon Phase**,
 kept as a documented null. This also includes **Candlesticks** as a formula-based
@@ -59,6 +59,7 @@ linked sections document how each was fitted and what it is worth.
 | + | [Reversal](#reversal-beyond-the-video) | Candles, divergence and structure breaks — N of 3 must agree |
 | + | [Harmonic Patterns](#harmonic-patterns-beyond-the-video) | Buy the XABCD completion zone — Gartley, Bat, Butterfly, Crab, … |
 | + | [Momentum Indicators](#momentum-indicators-beyond-the-video) | Nine oscillators on one scale — fade the stretched composite |
+| + | [CHoCH](#choch-change-of-character-beyond-the-video) | Fade the structure break — and tell CHoCH from BOS |
 | ✗ | [Moon Phase](#moon-phase-a-measured-negative) | Lunar folklore — **measured, no edge**; kept as a documented null |
 | + | [Elliott Wave](#elliott-wave-beyond-the-video) | Count impulse waves mechanically, bet the next leg |
 | + | [Renko](#renko-beyond-the-video) | Fade the brick that breaks a one-way run |
@@ -1019,6 +1020,107 @@ chance: fading exhaustion loses in a parabolic run. Every mean-reversion strateg
 in this repo fails in that same year. The edge also decays — 57–64% across
 2018–2023 against 55–57% across 2024–2026 — and Selective's two train halves are
 55.4% and 69.3%, a 14pp spread that no holdout can make respectable.
+
+## CHoCH (Change of Character) (beyond the video)
+
+*The first structure break against the trend.* Smart-Money-Concepts vocabulary
+for one idea: a trend is a sequence of swing points, and you can name the exact
+bar where that sequence stops behaving like one. **Two events come out of the
+same break**, and only the prior state separates them:
+
+| prior bias | price breaks | event | reading |
+|---|---|---|---|
+| bearish | last swing **high** | **CHoCH** (bullish) | the downtrend just failed |
+| bullish | last swing **high** | **BOS** (bullish) | the uptrend just continued |
+| bullish | last swing **low** | **CHoCH** (bearish) | the uptrend just failed |
+| bearish | last swing **low** | **BOS** (bearish) | the downtrend just continued |
+
+Bias is carried explicitly in a state machine, which is what this adds over the
+structure detector in [reversal.py](backend/strategies/reversal.py) — that one
+compares two swing lows against the latest swing high per bar and calls the
+result a "BOS", but by the table above it only ever fires on a downtrend broken
+upward, which is a **CHoCH**. Good detector, wrong name, no memory of bias.
+
+Swing points are fractal pivots admitted only at `j + pivot_right`; a level is
+consumed when it breaks and re-arms only when a new pivot confirms. A truncation
+test reproduces 105 sampled signals across the three presets with zero
+mismatches.
+
+| Group | Params |
+|-------|--------|
+| **Structure** | `pivot_left`, `pivot_right`, `max_level_age` |
+| **Event** | `signal_on` (CHoCH \| BOS \| Both) |
+| **Break** | `break_mode` (Close \| Wick), `break_buffer_atr`, `min_displacement_atr` |
+| **Entry** | `entry_mode` (On Break \| On Retest), `retest_tol_atr`, `max_retest_bars` |
+| **Higher Scale** | `use_htf_filter`, `htf_logic` (Agree \| Oppose), `htf_pivot_*` |
+| **Decision** | `predict_direction` (With \| Against Structure) |
+
+### Polymarket presets
+
+Fitted to **the last two years**, split rather than used whole: train
+2024-07-29 → 2025-11-01, pick frozen, then 2025-11-01 → 2026-07-29 scored once.
+2,025 configurations over three stages; mechanical selection.
+
+| preset | bets | hit | z | unswept 2017–24 | 2yr | train | HOLDOUT | worst full yr |
+|--------|-----:|----:|--:|------:|------:|------:|--------:|---------:|
+| **PM 5m Volume** | 25,730 | **57.79%** | +25.0 | 58.41% | 56.05% | 55.93% | 56.27% | 56.4% (2025) |
+| PM 5m Balanced | 8,421 | 56.77% | +12.4 | 56.97% | 56.22% | 57.51% | 53.92% | 55.2% (2021) |
+| PM 5m Selective | 5,219 | 59.55% | +13.8 | 59.95% | 58.03% | 60.60% | 53.94% | 58.7% (2018) |
+
+**Volume is the pick** — unusually for this repo, it is the only tier whose
+holdout matches its train (55.93% → 56.27%). Balanced and Selective post better
+headlines and shrink 3.6pp and 6.7pp out of sample.
+
+### Every break is traded backwards
+
+Pooled over stage 1, taking the break at face value scores **46.72%** train /
+46.04% holdout; fading it scores **53.15%** / 53.86%. There is no configuration
+where following structure wins. A structure break on 5m BTC is an exhaustion
+signal, not a continuation one.
+
+### The SMC claim, tested on matched settings
+
+SMC teaches that CHoCH marks reversal and BOS marks continuation. The cleanest
+test is **inside the Volume preset**, which trades both — identical settings,
+identical bars, identical filters, differing only in whether the break went
+against the prevailing bias:
+
+| event | bets | hit |
+|---|---:|---:|
+| **CHoCH** | 10,378 | **59.05%** |
+| BOS | 15,352 | 56.94% |
+
+CHoCH is worth **+2.1pp** over BOS on a matched comparison, and stage 2 agrees
+pooled (57.10% vs 54.35% on the holdout). So the distinction is real — but note
+what it is *not*: both are profitable, and both are profitable **faded**. CHoCH
+isn't the reversal signal and BOS the continuation signal; CHoCH is the *better*
+reversal signal and BOS the worse one.
+
+Corroboration from outside this file: reversal.py ships two presets on what is
+actually a faded CHoCH, scoring 56.60% and 56.84% — a different implementation
+landing within a point of this one.
+
+### What else the sweep found
+
+**The retest entry destroys the edge.** SMC's signature move is to wait for
+price to return to the broken level and enter on the "mitigation". At all three
+anchors it costs 5–6pp: 50.57% vs 56.01%, 50.87% vs 56.51%, 52.15% vs 57.93%.
+Whatever the break is telling you has decayed by the time price comes back.
+
+**Close beats wick** (53.78%/54.54% against 52.64%/53.32%). The stop-run through
+a level that closes back inside is real, and it is not a structure break.
+
+**`max_level_age` is inert** — 100, 500 and 2000 give byte-identical results. A
+level is consumed the moment it breaks and re-arms only when a new pivot
+confirms, so it never survives long enough to go stale.
+
+**Higher-scale "Oppose" helps** (58.25% holdout at 60-bar pivots, against 56.36%
+for no filter and 54.89% for "Agree") — fading a break that fights the *bigger*
+structure beats fading one aligned with it, the opposite of the SMC habit.
+
+**Where it fails.** 2017 (partial year) scores 47.8 / 43.8 / 50.6% — fading
+breaks loses when breaks keep running, which is what a parabolic year is. Every
+mean-reversion strategy in this repo fails in that same year.
 
 ## Fib Retracement (beyond the video)
 
@@ -2325,6 +2427,7 @@ backend/
     reversal.py          beyond the video: structure/candle reversal evidence
     harmonic.py          beyond the video: XABCD harmonic patterns (PRZ entry)
     momentum.py          beyond the video: nine momentum oscillators, normalised
+    choch.py             beyond the video: CHoCH/BOS market-structure breaks
     moon_phase.py        beyond the video: measured null (lore-only baseline)
     elliott_wave.py      beyond the video: causal zigzag impulse-wave counting
     renko.py             beyond the video: close-based brick runs and reversals
