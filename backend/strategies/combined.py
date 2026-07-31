@@ -41,7 +41,7 @@ SUB_IDS = ["rsi_bb", "stoch_wick", "atr_devexh", "bb_squeeze", "zscore_ms",
            "cci_williams", "multi_horizon", "fair_value_gap", "fib_retracement",
            "candlesticks", "reversal", "harmonic", "choch", "momentum",
            "elliott_wave", "renko", "trend_lines", "support_resistance",
-           "gann", "oscillators"]
+           "gann", "oscillators", "bos"]
 # moon_phase is deliberately absent: it was measured and found to have no edge
 # (see moon_phase.py), and a voter with no edge can only dilute an agreement
 # rule. It is still selectable on the Strategy Config tab.

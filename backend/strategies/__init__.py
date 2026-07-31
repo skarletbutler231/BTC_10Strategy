@@ -4,13 +4,15 @@ This is the ONLY place you touch to enable a new strategy in the dashboard.
 All ten of the video's strategies are implemented, plus Fair Value Gap, Fib
 Retracement, Candlesticks, Reversal, Harmonic Patterns, Momentum Indicators,
 Moon Phase, Elliott Wave, Renko, Trend Lines, Support & Resistance, Gann
-Angles and Oscillators (additions beyond the video). Filters shared between strategies
-(trading window, trend filter, MA/source helpers) live in common.py.
+Angles, Oscillators and Break of Structure (additions beyond the video). Filters
+shared between strategies (trading window, trend filter, MA/source helpers) live
+in common.py.
 """
 
 from ..registry import register
 from .atr_devexh import AtrDevExh
 from .bb_squeeze import BBSqueeze
+from .bos import BreakOfStructure
 from .candlesticks import Candlesticks
 from .cci_williams import CCIWilliams
 from .choch import Choch
@@ -63,6 +65,7 @@ register(TrendLines())
 register(SupportResistance())
 register(Gann())
 register(Oscillators())
+register(BreakOfStructure())
 
 # Registered last: it reads the others' presets, so they must already exist.
 register(Combined())
@@ -94,3 +97,4 @@ register(Combined())
 #      Support & Resistance (support_resistance.py) <-- DONE
 #      Gann Angles        (gann.py)               <-- DONE
 #      Oscillators        (oscillators.py)        <-- DONE
+#      Break of Structure (bos.py)                <-- DONE

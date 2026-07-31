@@ -10,11 +10,11 @@ the backend schema.
 
 **All ten of the video's strategies are implemented**, plus additions beyond
 them — **Fair Value Gap**, **Fib Retracement**, **Reversal**, **Harmonic
-Patterns**, **Momentum Indicators**, **CHoCH**, **Elliott Wave**, **Renko**, **Trend Lines**,
-**Support & Resistance** and **Gann Angles** — classic chart-analysis tools built
-on the same framework and held to the same evidence bar, along with **Moon Phase**,
-kept as a documented null. This also includes **Candlesticks** as a formula-based
-addition.
+Patterns**, **Momentum Indicators**, **CHoCH**, **Elliott Wave**, **Renko**,
+**Trend Lines**, **Support & Resistance**, **Gann Angles** and **Break of
+Structure** — classic chart-analysis tools built on the same framework and held
+to the same evidence bar, along with **Moon Phase**, kept as a documented null.
+This also includes **Candlesticks** as a formula-based addition.
 
 ---
 
@@ -67,6 +67,7 @@ linked sections document how each was fitted and what it is worth.
 | + | [Support & Resistance](#support--resistance-beyond-the-video) | Horizontal levels clustered from pivots — fade the break |
 | + | [Gann Angles](#gann-angles-beyond-the-video) | Fan from a pivot — **the angles measure as worthless**; the level earns |
 | + | [Oscillators](#oscillators-beyond-the-video) | One banded oscillator, five textbook rules — **only the band entry earns** |
+| + | [Break of Structure](#break-of-structure-beyond-the-video) | BOS and CHoCH as separate signals — fade the structural break |
 | ⊕ | Combined (Agreement) | Meta-strategy: require N of the above to confirm each other |
 
 ## Historical price data (local DB)
@@ -2059,6 +2060,104 @@ needs its own sweep.
 As everywhere else here, the EV per \$1 the dashboard reports assumes a 0.50 fill,
 which a real Polymarket book will not offer on a directional 5m market. **Hit
 rate is the finding**; the EV figure is an upper bound.
+
+
+## Break of Structure (beyond the video)
+
+*Read price as swing structure and fade the break of it.* A trend is up while
+making higher highs, down while making lower lows, and two events settle the
+argument:
+
+* **BOS** (Break of Structure) — price closes through the structural level in the
+  **same** direction as the prevailing trend. Continuation.
+* **CHoCH** (Change of Character) — price closes through it **against** the
+  trend. The first mechanical sign the trend has turned.
+
+Both break the same kind of level; only the trend at the time separates them,
+which is exactly why they are worth separating. One confirmed swing high and one
+swing low are live at a time, a break retires its level so it fires once, and a
+newer confirmed pivot replaces it.
+
+**What this adds over Reversal.** `reversal.py` already ships fitted BOS presets,
+but its detector is a single condition — last two lows descending, then a close
+above the most recent swing high. It cannot express BOS vs CHoCH as separate
+switches (its rule fires on what is really a CHoCH), displacement, retest entry,
+or a liquidity-sweep precondition. All four are parameters here.
+
+### What the sweep found
+
+Read against the window's own **flat ceiling** of 49.88%, not 50%. Protocol as
+elsewhere: `TRAIN 2024-07-30 → 2025-10-01` for selection only, `HOLDOUT` scored
+once after freezing, `UNSWEPT 2018-01-01 → 2024-07-30` never consulted.
+
+**Fade the break — emphatically.** Every faded config in Stage A beat every
+face-value one (best fade +5.11pp, best face-value −2.73pp). That is the fourth
+independent time this repo has landed there, alongside Reversal, Trend Lines and
+Support & Resistance.
+
+**Retest entry costs ~2pp** (Break Close 54.97% vs Retest 52.73%). Waiting for
+price to return to the broken level is standard SMC advice and it is worth
+negative money here.
+
+**Displacement earns nothing.** Its marginal is flat from 0.0 to 1.5 ATR
+(56.33% → 56.73%, inside noise). Requiring the breaking candle to be impulsive
+does not separate the breaks that revert from the ones that run. Off in every
+preset. `max_level_age_bars` is likewise flat to 0.13pp.
+
+Stage B (5,040 + 144 configs) was read off marginals rather than the argmax, and
+grids whose optimum hit a boundary were extended — after which the apparent peaks
+at buffer 2.0 (+1.13pp) and displacement 2.0 (+1.47pp) turned out to sit on 745
+and 514 mean bets, i.e. noise.
+
+| Preset | 2yr bets | 2yr hit | edge | train | HOLDOUT | unswept | z |
+|---|---|---|---|---|---|---|---|
+| PM 5m Volume | 7,076 | 55.64% | +5.76pp | 55.68% | 55.58% | 59.00% | +9.7 |
+| **PM 5m Balanced** | 5,323 | 56.38% | +6.50pp | 56.70% | 55.89% | 58.94% | +9.5 |
+| **PM 5m Selective** | 3,640 | 56.29% | +6.41pp | 56.05% | 56.66% | 58.95% | +7.7 |
+| *PM 5m Sweep* | 1,393 | 57.07% | +7.19pp | 58.52% | 54.72% | 57.20% | +5.4 |
+
+### How much is already in the repo — measured, not assumed
+
+Reversal ships BOS presets, and Trend Lines, Gann and Support & Resistance all end
+up fading the break of a mechanically located level. Comparing `(bar, side)`
+signal sets over the two years:
+
+| Preset | shared with ≥1 existing | unique | unique hit | shared hit |
+|---|---|---|---|---|
+| PM 5m Volume | 86.8% | 13.2% | **52.19%** | 56.16% |
+| PM 5m Balanced | 71.3% | 28.7% | 55.74% | 56.62% |
+| PM 5m Selective | 56.5% | **43.5%** | 55.56% | 56.84% |
+| PM 5m Sweep | 82.2% | 17.8% | 55.24% | 57.47% |
+
+The largest single overlap is with **Gann's `PM 5m Volume` at 60.5% Jaccard** —
+unsurprising once you know Gann's fitted optimum collapsed to a horizontal pivot
+level, which is very nearly what a structural level is. Overlap with *Reversal's*
+own BOS presets is much lower (10–23%), because its detector needs two descending
+lows and fires on a CHoCH.
+
+**Read the table this way.** Selectivity buys independence: as the buffer rises
+the unique share goes 13% → 29% → 44% while the unique bets keep scoring
+55.5–55.7%. ⚠️ **`PM 5m Volume` is 87% duplicate and its unique 13% is weak
+(52.19%)** — the tier least worth running alongside the others. *Balanced* and
+*Selective* carry genuinely new signal at full strength; **prefer *Selective* as a
+Combined voter.**
+
+⚠️ **2017 breaks every tier** — 44.50–46.37% against that year's 46.50% ceiling.
+A parabolic run in which broken structure kept going: the standard failure mode of
+a fade, and the same year that breaks Reversal and Harmonic. Every full year
+2018–2026 clears comfortably.
+
+⚠️ **The edge decays** — all tiers score ~3pp higher across the never-swept
+2018–2024 than over the last two years (Volume 59.00% vs 55.64%). The two-year
+number is the live estimate.
+
+⚠️ ***Sweep* is the most speculative** — 1,393 bets on a 530-bet holdout, and
+58.52% train → 54.72% holdout is the only material post-selection decay here. It
+requires the level to be wicked and rejected before the break counts, which is the
+one variant Reversal cannot express.
+
+Look-ahead is verified by truncation on all four presets: cutting the series at any
+signal bar reproduces that signal exactly.
 
 
 ## Volume Exhaustion (strategy #7)
