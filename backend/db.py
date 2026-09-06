@@ -132,6 +132,36 @@ CREATE TABLE IF NOT EXISTS cl_partial (
 );
 
 -- ============================================================================
+-- Chainlink BTC/USD 30s and 60s TWAPs, one row per captured SECOND, folded out
+-- of the same pmqb stream.jsonl by ``backend.data.ingest_twap``.
+--
+-- WHY ITS OWN TABLE AND NOT ``candles``. These are smoothed AVERAGES, not spot
+-- prints: a 30s TWAP lags spot by ~15s and a differenced 30s-averaged series
+-- carries only ~91% of true volatility. Putting them in ``candles`` beside
+-- BTCUSD_CL would invite exactly the mix-up ingest_stream.py already guards
+-- against (BTCUSD_CL must stay SPOT). Kept per-second rather than per-minute
+-- because the thing these are *for* is the boundary-aligned settlement price,
+-- and a 1m OHLC fold destroys the boundary second.
+--
+-- WHAT SETTLEMENT ACTUALLY READS. Polymarket's 5m BTC market settled on the
+-- Chainlink 30s TWAP until 2026-08-14 00:00 UTC and on the 60s TWAP after it,
+-- so a query spanning that boundary must switch columns at it.
+--
+-- ⚠️ ``time`` is OUR capture second, not Chainlink's observation time: the feed
+-- publishes ~0.95 reports/sec, so a given second may carry the report stamped
+-- one second earlier. ``obs_ts`` is that observation stamp, which makes the
+-- ingestion lag measurable instead of assumed -- but the engine only records it
+-- for the series the market resolves on at the time (30s before the 2026-08-14
+-- cutover, 60s after), which is what ``obs_win`` names.
+CREATE TABLE IF NOT EXISTS cl_twap (
+    time    INTEGER PRIMARY KEY,  -- capture time, unix SECONDS (UTC)
+    twap30  REAL,                 -- Chainlink BTC/USD 30s TWAP as of `time`
+    twap60  REAL,                 -- Chainlink BTC/USD 60s TWAP as of `time`
+    obs_ts  INTEGER,              -- Chainlink observation time, unix SECONDS
+    obs_win INTEGER               -- which window obs_ts belongs to: 30 or 60
+) WITHOUT ROWID;
+
+-- ============================================================================
 -- PMData (api.pmdata.dev) full-history Polymarket L2 order book, folded to a
 -- 1-second grid by ``backend.data.ingest_pmdata``. The raw daily archives are
 -- ~30M events/day, so SQLite holds the per-second state and the untouched

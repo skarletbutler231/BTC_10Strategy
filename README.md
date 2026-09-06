@@ -175,15 +175,18 @@ agree with recorded outcomes 99.6% of the time). Net result: **99.9% of ~9,400
 windows carry a UP/DOWN label**, split ~50/50 (no directional bias).
 
 Live ingest is driven by **`run_updaters.sh`** — the single entry point for every
-market.db updater (`stream` = Chainlink + Polymarket, `binance` = 1m candles,
-`pmdata` = Polymarket L2 order book, `all` = all three). Each job takes its own
-`flock` lock, so the fast and slow jobs run at their own cadences without ever
-colliding:
+market.db updater (`stream` = Chainlink + Polymarket, `twap` = Chainlink TWAPs,
+`binance`/`binance1m`/`binance1s` = Binance candles, `pmdata` = Polymarket L2
+order book, `all` = every job). Each job takes its own `flock` lock, so the fast
+and slow jobs run at their own cadences without ever colliding:
 
 ```cron
-* * * * *    <proj>/run_updaters.sh stream  >> <proj>/data/ingest_stream.log 2>&1
-*/30 * * * * <proj>/run_updaters.sh binance >> <proj>/data/binance_ingest.log 2>&1
-40 1 * * *   <proj>/run_updaters.sh pmdata  >> <proj>/data/pmdata_ingest.log 2>&1
+* * * * *    <proj>/run_updaters.sh stream    >> <proj>/data/ingest_stream.log 2>&1
+* * * * *    <proj>/run_updaters.sh twap      >> <proj>/data/twap_ingest.log 2>&1
+* * * * *    <proj>/run_updaters.sh binance1s >> <proj>/data/binance_1s.log 2>&1
+* * * * *    <proj>/run_updaters.sh binance1m >> <proj>/data/binance_1m_tail.log 2>&1
+*/30 * * * * <proj>/run_updaters.sh binance   >> <proj>/data/binance_ingest.log 2>&1
+40 1 * * *   <proj>/run_updaters.sh pmdata    >> <proj>/data/pmdata_ingest.log 2>&1
 ```
 
 Read the data back with `backend/pm_store.py`: `coverage()`, `windows(lo, hi)`,
@@ -198,6 +201,55 @@ price at/just before a given second into a window, i.e. a realistic fill price.
 tick — `pm_quote.p_up_bin` (Binance-fed) and `p_up_chain` (Chainlink-fed) — which
 power the PM Edge strategy below. (`p_up_bin` only exists from ~2026-07-07, when
 pmqb added the Binance-fed model.)
+
+## Chainlink 30s + 60s TWAPs (`ingest_twap` -> `cl_twap`)
+
+Polymarket **settles** the BTC 5m market on a Chainlink TWAP, not on spot — the
+30s stream until `2026-08-14 00:00 UTC`, the 60s stream after it. pmqb writes
+both averages on every snapshot line, and `ingest_twap` folds them into one row
+per captured second:
+
+```bash
+python3 -m backend.data.ingest_twap            # backfill (first run) / append (later)
+python3 -m backend.data.ingest_twap --reset    # rescan from offset 0
+```
+
+| `cl_twap` column | |
+|---|---|
+| `time` | capture second, unix seconds UTC (**primary key**) |
+| `twap30` / `twap60` | Chainlink BTC/USD 30s and 60s TWAP as of `time` |
+| `obs_ts` | Chainlink's own observation stamp for that report |
+| `obs_win` | which window `obs_ts` belongs to — `30` before the cutover, `60` after |
+
+**Loaded as of 2026-08-20** — `2026-08-04 05:30 .. now`, **1.41M rows**, 99% of
+every second (the feed publishes ~0.95 reports/sec, so some seconds have none).
+The series starts on 08-04 because that is when pmqb began recording the fields.
+`obs_ts` runs ~1.5 s behind `time`: that is our ingestion lag, and keeping it on
+the row is what makes it measurable rather than assumed.
+
+Sanity check against Polymarket's own strikes — joining `cl_twap` to
+`pm_window.start_price` at the window boundary:
+
+| | vs `twap30` | vs `twap60` |
+|---|---|---|
+| windows **before** the cutover | **MAE $0.62** | MAE $3.36 |
+| windows **after** the cutover | MAE $3.13 | **MAE $0.85** |
+
+i.e. the right column wins on the right side of `2026-08-14`, which is both a
+check on the data and a reminder that **a query spanning that date must switch
+columns at it**.
+
+> Deliberately **not** in `candles`. These are smoothed averages — a 30s TWAP
+> lags spot by ~15 s, and differencing a 30s-averaged series recovers only ~91%
+> of true volatility — so they must never be mistaken for the `BTCUSD_CL` spot
+> series sitting next to them. Kept per-second rather than per-minute because the
+> thing they are *for* is the boundary-aligned settlement price, and a 1m OHLC
+> fold destroys the boundary second.
+>
+> It is also a **separate job from `stream`**, with its own cursor under a
+> `twap:` prefix in `stream_cursor`. `ingest_stream`'s cursor was already parked
+> at the end of an 11 GB file, so teaching it about TWAP would have meant a full
+> `--reset` — rewriting every `pm_quote` row — just to pick up the history.
 
 > **DB location:** the store path comes from `MARKET_DB` in `.env` (a shared
 > `…/database/market.db`), and `backend/db.py` now reads `.env` itself — so any

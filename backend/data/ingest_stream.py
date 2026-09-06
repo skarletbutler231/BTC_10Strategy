@@ -175,7 +175,15 @@ def run(*, source: str | None = None, reset: bool = False, db_path=None) -> dict
                     if st is None or ts is None:
                         continue
                     tsec = int(ts) // 1000
-                    cp = w.get("currentPrice")
+                    # BTCUSD_CL candles must stay a SPOT series. Since 2026-08-07 the engine's
+                    # request.window.currentPrice may carry the Chainlink 30s TWAP instead
+                    # (CHAINLINK_MODEL_PRICE=twap30), which would silently turn this OHLC into a
+                    # smoothed one — ~91% of true vol, ~15s lagged. `chainlinkRefPrice` is written
+                    # on every snapshot for exactly this reason; currentPrice is the pre-flag
+                    # fallback and is spot on all rows written before the cutover.
+                    cp = r.get("chainlinkRefPrice")
+                    if cp is None:
+                        cp = w.get("currentPrice")
                     if cp is not None:
                         _fold(minutes, tsec, float(cp))
                     if st not in pm_win:
@@ -192,15 +200,25 @@ def run(*, source: str | None = None, reset: bool = False, db_path=None) -> dict
                                           _f(pub), _f(puc)))
                         if len(quote_buf) >= QUOTE_FLUSH:
                             flush_quotes()
-                else:  # outcome (chainlink)
+                else:  # outcome
                     n_out += 1
                     st = r.get("startTs")
                     if st is None:
                         continue
                     ep = r.get("endPrice")
+                    # Record WHICH source decided the label. Since the 2026-08-07 TWAP cutover the
+                    # provisional 'chainlink' label (close-boundary spot) is no longer Polymarket's
+                    # settlement rule -- it agrees ~97.5% of the time but is not authoritative.
+                    # 'gamma' rows are read back from the on-chain resolution and MUST NOT be
+                    # downgraded by a provisional that appears earlier in the file.
+                    src = "gamma" if r.get("source") == "gamma" else "chainlink"
+                    prev = pm_res.get(st)
+                    if prev is not None and prev[3] == "gamma" and src != "gamma":
+                        continue                      # never let a provisional overwrite authority
                     pm_res[st] = (str(r.get("marketId")) if r.get("marketId") is not None else None,
                                   float(ep) if ep is not None else None,
-                                  1 if r.get("up") else 0)
+                                  1 if r.get("up") else 0,
+                                  src)
 
                 if start >= next_progress:
                     flush_quotes()
@@ -236,14 +254,19 @@ def run(*, source: str | None = None, reset: bool = False, db_path=None) -> dict
                 "(start_ts, market_id, slug, end_ts, start_price, end_price, resolved_up) "
                 "VALUES (?,?,?,?,?,?,NULL)",
                 [(st, mid, slug, st + WINDOW_SEC, sp, None) for st, (mid, slug, sp) in pm_win.items()])
-        for st, (mid, ep, up) in pm_res.items():
+        for st, (mid, ep, up, src) in pm_res.items():
+            # A 'gamma' (authoritative) label always wins; a provisional 'chainlink' label must not
+            # clobber one already stored, or a re-ingest would silently discard the real outcome.
             conn.execute(
                 "INSERT INTO pm_window (start_ts, market_id, end_ts, end_price, resolved_up, resolved_src) "
-                "VALUES (?,?,?,?,?,'chainlink') ON CONFLICT(start_ts) DO UPDATE SET "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(start_ts) DO UPDATE SET "
                 "end_ts=excluded.end_ts, end_price=excluded.end_price, "
-                "resolved_up=excluded.resolved_up, resolved_src='chainlink', "
+                "resolved_up=CASE WHEN pm_window.resolved_src='gamma' AND excluded.resolved_src<>'gamma' "
+                "                 THEN pm_window.resolved_up ELSE excluded.resolved_up END, "
+                "resolved_src=CASE WHEN pm_window.resolved_src='gamma' AND excluded.resolved_src<>'gamma' "
+                "                  THEN 'gamma' ELSE excluded.resolved_src END, "
                 "market_id=COALESCE(pm_window.market_id, excluded.market_id)",
-                (st, mid, st + WINDOW_SEC, ep, up))
+                (st, mid, st + WINDOW_SEC, ep, up, src))
 
         # Recover resolution for windows without a recorded outcome (the early
         # pre-outcome-logging period) from the NEXT window's Chainlink start
