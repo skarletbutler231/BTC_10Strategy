@@ -102,17 +102,28 @@ def _clamp(x: float) -> float:
 
 
 def _smooth(series: List[Optional[float]], period: int) -> List[Optional[float]]:
-    """SMA over a series that may carry a leading None warm-up. period<=1 is a
-    pass-through, so 'no smoothing' costs nothing."""
+    """SMA over a series that may carry None gaps. period<=1 is a pass-through,
+    so 'no smoothing' costs nothing.
+
+    Gaps are not only the leading warm-up: Williams %R is undefined on a flat
+    window, Ultimate on a zero true-range window and TSI on a zero denominator,
+    all of which dead 2017 tape produces mid-series. Any window that contains a
+    None yields None and the running sum restarts after the gap. On a gap-free
+    series this is the same arithmetic, in the same order, as ``ind.sma``.
+    """
     n = len(series)
     if period <= 1:
         return list(series)
-    start = next((i for i, v in enumerate(series) if v is not None), n)
     out: List[Optional[float]] = [None] * n
-    if start >= n:
-        return out
-    for j, v in enumerate(ind.sma([float(x) for x in series[start:]], period)):
-        out[start + j] = v
+    run, s = 0, 0.0                          # consecutive valid bars, their sum
+    for i, v in enumerate(series):
+        if v is None:
+            run, s = 0, 0.0
+            continue
+        run += 1
+        s += v if run <= period else v - series[i - period]
+        if run >= period:
+            out[i] = s / period
     return out
 
 
@@ -558,3 +569,120 @@ PRESETS: dict = {
         "overbought": 90, "oversold": 10,
     },
 }
+
+# ---------------------------------------------------------------------------
+# 15-MINUTE preset. Fitted on the latest six months of BTCUSDT 15m, which is a
+# different protocol from the three above and needs saying up front:
+#
+#   LOADED   2026-03-13 -> 2026-09-13   the six months the sweep ran on
+#     train  2026-03-13 -> 2026-07-13   selection happened here (4 months)
+#     hold   2026-07-13 -> 2026-09-13   scored after the pick was frozen (2)
+#   UNLOADED 2017-08-17 -> 2026-03-13   never read by the sweep; scored once at
+#                                       the end as the real out-of-sample check
+#
+# Six months of 15m is 17,700 bars, so the fitted window cannot on its own
+# separate a fit from a fluke. The unloaded 8.5 years carry the result: 21,602
+# bets there against 1,383 in the fitted window.
+#
+# SWEEP. Stage 1 (1,960 configs) raced every family — 7 oscillators x 5
+# triggers x Fade/Follow x 7 lengths x 2 bands x 2 smoothings. Stage 2 (2,744)
+# tuned length (3-28), smoothing (1-5) and band (60/40-90/10) inside the
+# survivor. Stage 3 (66) tried the ATR band, ATR length, trend filter and
+# smoothing on the frozen finalists. The rule was fixed before stage 2 ran:
+# train bets >= 600, both train halves above 52%, length and band off the grid
+# boundary, then highest train hit.
+#
+# WHAT THE 15m SWEEP FOUND — the 5m findings, one for one
+#
+# 1. Zone Entry + Fade is again the only family that earns. Pooled over stage 1
+#    (train / holdout): Zone Entry Fade 53.31 / 53.22; Centerline Cross Fade
+#    51.46 / 51.52; everything else at or under 50 on the holdout. The textbook
+#    band EXIT on the shipped settings scores 52.02% in the window and 50.41%
+#    on the unloaded years — the wait for confirmation still eats the edge.
+# 2. Follow is the exact mirror: 42.81% in the window, 42.44% unloaded.
+# 3. Both marginals are monotone again. Pooled train hit rises with the band
+#    (60: 52.42 -> 90: 54.38) and with length (3: 52.51 -> 28: 54.39) without an
+#    inversion. Smoothing, unlike on 5m, does NOT help: 1 bar 53.30, 2: 53.22,
+#    3: 52.47, 5: 53.26, and on the finalists it only removes bets.
+# 4. Same oscillator ranking. Zone Entry Fade, stage 2 pooled (train / hold):
+#    RSI 54.93 / 55.45, TSI 54.38 / 54.56, Ultimate 54.08 / 54.32, Stochastic
+#    53.47 / 53.07, CCI 53.01 / 53.13, Stoch RSI 51.62 / 51.83.
+# 5. The filters buy nothing. The ATR band changes <= 0.3pp and <= 20 bets at
+#    every setting tried (p5 of 15m ATR% is 0.097, so the 0.05 floor is a
+#    sanity check, not a fit); ATR length is inert; Against Trend at EMA20 is
+#    byte-identical to unfiltered and longer MAs only remove bets; With Trend
+#    removes 60-97% of them.
+#
+# THE PICK, AND WHY IT IS NOT THE RULE'S PICK. The rule selected TSI 9 30/70:
+# 963 bets at 59.09% in the window, train 59.82%, holdout 57.56%. The train
+# frontier from 600 to 1,200 train bets is a plateau, though, not a peak:
+#
+#   config             6m bets  6m hit  train (halves)      HOLDOUT  UNLOADED 8.5y
+#   TSI 9   30/70         963   59.09%  59.82 (62.6/57.1)   57.56%   14,617  57.84%
+#   RSI 7   30/70       1,383   57.19%  57.86 (58.1/57.6)   55.89%   21,602  57.50%
+#   RSI 9   35/65       1,563   57.39%  57.82 (56.3/59.4)   56.50%   24,182  57.29%
+#   RSI 8   35/65       1,782   56.96%  57.48 (56.0/58.8)   55.88%   28,080  57.52%
+#
+# TSI's two-point in-window lead shrinks to a third of a point on the unloaded
+# years, on half the bets; its train halves are 5.5pp apart against RSI 7's
+# 0.5pp. The bet gap is structural (it is the band and the length) and the hit
+# gap is not, so for a brief of bets AND hit rate RSI 7 30/70 is the knee of
+# the frontier: 44% more bets than TSI 9 at the same out-of-sample edge, and
+# the most even train halves of anything on it. It is also Wilder's band at 7
+# bars — 105 minutes, the same wall-clock scale as the 5m Balanced's 14 x 5m =
+# 70 min. The 5m preset's length carried over unchanged (RSI 14 on 15m, 3.5 h)
+# scores 59.04% on 459 window bets but 55.40% on 7,099 unloaded ones with
+# three years under 54%: length has to be rescaled, not copied.
+#
+# RESULTS — flat $1 per bet, next-candle direction
+#
+#   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y          worst yr
+#   PM 15m Balanced      1,383  57.19%  57.86%   55.89%    57.50% (21,602, z +22)  56.09% (2021)
+#
+# Per year on the full record, none of it fitted except the last six months:
+#   2017  50.70% (785)    2020  58.08% (2450)   2023  58.70% (2472)   2026  57.32% (1907)
+#   2018  58.21% (2479)   2021  56.09% (2619)   2024  58.45% (2628)
+#   2019  57.71% (2367)   2022  57.38% (2541)   2025  57.54% (2737)
+#
+# Every full year sits in a 56.1-58.7% band, the 18 months right before the
+# window (2024-09 -> 2026-03) score 57.41% on 4,057 bets, and 2017 — the year
+# that loses on every 5m preset — is at chance rather than under it. Whole
+# record: 22,985 bets, 57.48%, z +22.7. About 7.5 bets a day.
+#
+# Read the hit rates against 49.9%, not 50%: 0.13% of 15m candles close
+# exactly at their open (0.48% on 5m) and lose whichever side you take.
+#
+# CHECKS RUN AFTER THE PICK WAS FROZEN
+# * No look-ahead: the prefix test passes with 0 mismatches at three cut points.
+# * Not directional beta: bets run 49% long / 51% short and both sides win —
+#   window 57.14% / 57.24%, unloaded 58.22% / 56.81% — while 49.56% of window
+#   candles close up.
+# * Not Reversal's PM 15m BOS relabelled: 21% of these bars are shared (Jaccard
+#   15.6%), and the exclusive 1,090 bets score 55.87% against a 51.95% base
+#   rate for a 15m bar reversing the one before it. The 293 shared bars run
+#   ~62%: the two strategies agree on the strongest setups and disagree on the
+#   rest.
+#
+# WHERE IT FAILS. The worst month in the window is 2026-06 at 54.3% on 221
+# bets; the other six range 55.8-60.9%. The worst full year is 2021 at 56.09%.
+# Expect weeks at 54-55%, and read the 57% as a multi-month average. The
+# 0.50-odds EV the dashboard prints assumes a fill at even; a real 15m book
+# prices away from it. Hit rate is the finding.
+#
+# NOT SHIPPED. TSI 9 30/70 (above) if hit rate alone is the brief — its 57.84%
+# unloaded is real, it simply costs half the bets. RSI 8 35/65 for volume:
+# 1,782 window bets at 56.96%, 28,080 unloaded at 57.52% (the highest z in the
+# sweep, +25.2), but a narrower band than the marginal favours and train halves
+# 2.8pp apart. Smoothing (RSI 7 sk=2: 921 bets, 57.87% / 57.93%) trades a
+# third of the bets for nothing out of sample. An ATR floor of 0.20% lifts the
+# window hit to 57.87% and removes a third of the bets; not taken.
+PRESETS.update({
+    # 1,383 bets, 57.19% hit on 2026-03..09; unloaded 2017-08..2026-03 57.50%
+    # on 21,602 bets (z +22.0); every full year 56.1-58.7%. Wilder's 30/70 band
+    # on a 7-bar (105 min) RSI, unsmoothed — the knee of the bets/hit frontier.
+    "PM 15m Balanced": {
+        **_OSC_COMMON,
+        "osc_type": "RSI", "osc_length": 7, "smooth_k": 1,
+        "overbought": 70, "oversold": 30,
+    },
+})

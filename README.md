@@ -2179,6 +2179,96 @@ As everywhere else here, the EV per \$1 the dashboard reports assumes a 0.50 fil
 which a real Polymarket book will not offer on a directional 5m market. **Hit
 rate is the finding**; the EV figure is an upper bound.
 
+#### 15-minute preset
+
+Fitted on the **latest six months** of BTCUSDT 15m (2026-03-13 → 2026-09-13),
+the same protocol as [Reversal's 15m preset](#15-minute-preset): train
+2026-03-13 → 07-13, holdout 07-13 → 09-13 scored after the pick was frozen, and
+the 8.5 years before the window **never loaded** by any sweep stage — scored
+once at the end. Six months of 15m is 17,700 bars, so the fitted window cannot
+separate a fit from a fluke on its own; the unloaded years carry the result
+(21,602 bets there against 1,383 in the window).
+
+Stage 1 (1,960 configs) raced every family — 7 oscillators × 5 triggers ×
+Fade/Follow × 7 lengths × 2 bands × 2 smoothings; stage 2 (2,744) tuned length,
+smoothing and band inside the survivor; stage 3 (66) tried the ATR band, ATR
+length, trend filter and smoothing on the frozen finalists. The selection rule
+was fixed before stage 2 ran: train bets ≥ 600, both train halves above 52%,
+length and band off the grid boundary, then highest train hit.
+
+**The 5m findings replicate one for one.** Zone Entry + Fade is again the only
+family that earns (pooled stage 1, train / holdout: 53.31 / 53.22; Centerline
+Cross 51.46 / 51.52; everything else at or under 50 on the holdout). Follow is
+the exact mirror (42.81% in the window, 42.44% unloaded). The textbook band
+*exit* on the shipped settings scores 52.02% in the window and 50.41% on the
+unloaded years. The band and length marginals are monotone again (band 60 →
+90: 52.42 → 54.38%; length 3 → 28: 52.51 → 54.39%), the oscillator ranking is
+the same (RSI 54.93 / 55.45, TSI 54.38 / 54.56, Ultimate 54.08 / 54.32,
+Stochastic 53.47 / 53.07, CCI 53.01 / 53.13, Stoch RSI 51.62 / 51.83), and the
+ATR band, ATR length and trend filter are inert. One difference: smoothing does
+*not* help on 15m — on the finalists it only removes bets.
+
+**The pick is not the rule's pick, and here is why.** The rule selected TSI 9
+30/70. The train frontier from 600 to 1,200 train bets is a plateau, not a
+peak:
+
+| config | 6m bets | 6m hit | train (halves) | HOLDOUT | unloaded 8.5y |
+|--------|--------:|-------:|---------------:|--------:|--------------:|
+| TSI 9, 30/70 | 963 | **59.09%** | 59.82% (62.6 / 57.1) | 57.56% | 14,617 · 57.84% |
+| **RSI 7, 30/70** | **1,383** | 57.19% | 57.86% (58.1 / 57.6) | 55.89% | 21,602 · 57.50% |
+| RSI 9, 35/65 | 1,563 | 57.39% | 57.82% (56.3 / 59.4) | 56.50% | 24,182 · 57.29% |
+| RSI 8, 35/65 | 1,782 | 56.96% | 57.48% (56.0 / 58.8) | 55.88% | 28,080 · 57.52% |
+
+TSI's two-point in-window lead shrinks to a third of a point on the unloaded
+years, on half the bets, and its train halves are 5.5pp apart against RSI 7's
+0.5pp. The bet gap is structural (it is the band and the length); the hit gap
+is not. For a brief of **bets and hit rate**, RSI 7 30/70 is the knee of the
+frontier — 44% more bets than TSI 9 at the same out-of-sample edge, with the
+most even train halves of anything on it. It is Wilder's band at 7 bars: 105
+minutes, the same wall-clock scale as the 5m Balanced's 14 × 5m = 70 min.
+Carrying the 5m length over unchanged (RSI 14 on 15m = 3.5 h) scores 59.04% on
+459 window bets but **55.40% on 7,099 unloaded ones** with three years under
+54% — the length has to be rescaled, not copied.
+
+| preset | 6m bets | 6m hit | train | HOLDOUT | unloaded 2017-08 → 2026-03 | worst yr |
+|--------|--------:|-------:|------:|--------:|---------------------------:|---------:|
+| PM 15m Balanced | 1,383 | 57.19% | 57.86% | 55.89% | **57.50%** (21,602 bets, z +22.0) | 56.09% (2021) |
+
+Per year on the full record, none of it fitted except the last six months:
+
+| year | hit (bets) | | year | hit (bets) | | year | hit (bets) |
+|---|---:|---|---|---:|---|---|---:|
+| 2017 | 50.70% (785) | | 2021 | 56.09% (2,619) | | 2025 | 57.54% (2,737) |
+| 2018 | 58.21% (2,479) | | 2022 | 57.38% (2,541) | | 2026 | 57.32% (1,907) |
+| 2019 | 57.71% (2,367) | | 2023 | 58.70% (2,472) | | | |
+| 2020 | 58.08% (2,450) | | 2024 | 58.45% (2,628) | | | |
+
+**Every full year sits in a 56.1–58.7% band**, the 18 months right before the
+window (2024-09 → 2026-03) score 57.41% on 4,057 bets, and 2017 — the year that
+loses on every 5m preset — is at chance rather than under it. Whole record:
+22,985 bets, 57.48%, z +22.7, about 7.5 bets a day. Read the hit rates against
+49.9%: only 0.13% of 15m candles close exactly at their open (0.48% on 5m).
+
+After the pick was frozen: the prefix test passes with 0 mismatches at three
+cut points; bets run 49% long / 51% short and both sides win (window 57.14% /
+57.24%, unloaded 58.22% / 56.81%) while 49.56% of window candles close up; and
+it is not Reversal's PM 15m BOS relabelled — 21% of bars are shared (Jaccard
+15.6%), the exclusive 1,090 bets score 55.87% against a 51.95% base rate for a
+15m bar reversing the one before it, and the 293 shared bars run ~62%: the two
+strategies agree on the strongest setups and disagree on the rest.
+
+**Where it fails.** The worst month in the window is 2026-06 at 54.3% on 221
+bets; the other six range 55.8–60.9%. Expect weeks at 54–55% and read the 57%
+as a multi-month average.
+
+**Not shipped.** TSI 9 30/70 if hit rate alone is the brief — its 57.84%
+unloaded is real, it simply costs half the bets. RSI 8 35/65 for volume: 1,782
+window bets at 56.96%, 28,080 unloaded at 57.52% (the highest z in the sweep,
++25.2), but a narrower band than the marginal favours and train halves 2.8pp
+apart. Smoothing (RSI 7, 2 bars: 921 bets, 57.87% / 57.93%) trades a third of
+the bets for nothing out of sample; an ATR floor of 0.20% lifts the window hit
+to 57.87% and removes a third of the bets. Neither was taken.
+
 
 ## Volume Exhaustion (strategy #7)
 
