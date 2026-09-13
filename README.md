@@ -832,6 +832,73 @@ The `+0.13` EV per \$1 at 0.50 odds assumes a 0.50 fill, which a real Polymarket
 book will not offer on a directional 5m market. Hit rate is the finding; the EV
 figure is an upper bound.
 
+#### 15-minute preset
+
+Fitted on the **latest six months** of BTCUSDT 15m (2026-03-13 → 2026-09-13),
+which is a different protocol from the two above and needs saying up front. The
+six months were split 4 / 2 — train 2026-03-13 → 07-13, holdout 07-13 → 09-13
+scored after the pick was frozen — and the nine years before the window were
+**never loaded** by the sweep; they were scored once at the end. Six months of
+15m is only 17,696 bars, so the fitted window cannot separate a fit from a
+fluke on its own; the unloaded years carry the result (12,006 bets there against
+793 in the window).
+
+The sweep ran every detector family in both directions (2,802 configs), then
+refined the survivor over the pivot geometry, ATR band, ATR length and trend
+filter and tried every OR-combination with the pattern and divergence detectors
+(3,216 configs). Selection was by train hit at ≥ 300 train bets with the grid
+boundary excluded. Only one family had an edge:
+
+| `pivot_left` (right = 1) | 2 | 3 | 4 | 6 | 8 | 12 | 16 | 20 | 30 |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| 6m bets | 845 | 874 | 856 | **816** | 746 | 634 | 546 | 526 | 432 |
+| train hit | 55.7 | 56.5 | 55.7 | 56.7 | 58.4 | 58.2 | 58.8 | 60.5 | 59.1 |
+| HOLDOUT hit | 47.8 | 54.8 | 58.0 | **61.2** | 60.8 | 60.6 | 59.9 | 60.9 | 55.6 |
+
+Train rises with `pivot_left` to the edge of the grid — the overfitting
+signature — while the holdout is flat at 60–61% from 6 to 20 and falls off at
+30. `pivot_left = 6` is the **low end of that plateau**, i.e. the most bets it
+offers, and that is why it was taken over the train maximum. Six 15m bars is 90
+minutes, which is where the 5m (12–30 bars = 1–2.5 h) and 1m (90–150 bars =
+1.5–2.5 h) presets landed independently: the effect lives at a wall-clock
+scale, not a bar count.
+
+| preset | 6m bets | 6m hit | train | HOLDOUT | unloaded 2017 → 2024-09 | worst yr |
+|--------|--------:|-------:|------:|--------:|------------------------:|---------:|
+| PM 15m BOS | 793 | 58.64% | 56.83% | 62.55% | **58.81%** (9,405 bets, z +17.1) | 54.70% (2025) |
+
+Per year on the full record, none of it fitted except the last six months:
+
+| year | hit (bets) | | year | hit (bets) | | year | hit (bets) |
+|---|---:|---|---|---:|---|---|---:|
+| 2017 | 56.23% (393) | | 2021 | 58.72% (1,635) | | 2025 | 54.70% (1,757) |
+| 2018 | 58.93% (1,142) | | 2022 | 56.83% (1,369) | | 2026 | 58.59% (1,106) |
+| 2019 | 59.53% (1,107) | | 2023 | 57.58% (1,424) | | | |
+| 2020 | 62.92% (1,281) | | 2024 | 57.10% (1,585) | | | |
+
+**Every year clears 54%, including 2017 and 2018** — the years that sink the
+5m and 1m presets. At 15m a structure break resolves inside the same one-way
+move that runs the fast presets over, so the fade holds even in the parabolic
+years. The cost is volume: ~4.4 bets a day against ~15 on 5m. Over all nine
+years it is 58.06% on 12,799 bets (z +18.2), the never-loaded years score
+*higher* than the fitted window, bets run 49% UP / 51% DOWN and hit 57.98% long
+/ 58.13% short (not directional beta), and a truncation test reproduces 60/60
+sampled signals with zero future bars.
+
+**Where it fails.** The worst month in the fit window is 2026-04 at 52.5% on
+118 bets; the other six range 55–64%. Expect stretches at the coin-flip line
+lasting weeks and read the 58% as a multi-month average, not a monthly floor.
+
+**Not shipped.** The brief was bets *and* hit rate, and OR-ing the candlestick
+or divergence detectors into the preset does raise the bet count (to
+1,100–9,000) — but every added bet lands at 52–54%, which is exactly the base
+rate at which a 15m bar reverses the one before it (52.0% in the window, 51.8%
+in the 18 months prior). Those detectors add volume at chance. `pivot_left =
+20` hits 60.82% inside the fitted window but only 57.30% on the unloaded years
+against this preset's 58.81%, with 35% fewer bets — the in-window edge was the
+fit talking. The ATR band, `max_pivot_gap`, ATR length and the trend filter
+were all swept and are inert or negative on 15m.
+
 ## Harmonic Patterns (beyond the video)
 
 *XABCD geometry, entered at the completion zone.* Harmonic pattern theory

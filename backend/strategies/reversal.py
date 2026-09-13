@@ -647,3 +647,90 @@ PRESETS.update({
     # Best hit of the two and the better holdout; a 150-bar (2.5 h) left window.
     "PM 1m BOS Balanced": {**_BOS_1M_COMMON, "pivot_left": 150, "pivot_right": 1},
 })
+
+# ---------------------------------------------------------------------------
+# 15-MINUTE preset. Fitted on the latest six months of BTCUSDT 15m, which is a
+# different protocol from the two above and needs saying up front:
+#
+#   LOADED   2026-03-13 -> 2026-09-13   the six months the sweep ran on
+#     train  2026-03-13 -> 2026-07-13   selection happened here (4 months)
+#     hold   2026-07-13 -> 2026-09-13   scored after the pick was frozen (2)
+#   UNLOADED 2017-08-17 -> 2026-03-13   never read by the sweep; scored once at
+#                                       the end as the real out-of-sample check
+#
+# Six months of 15m is only 17,696 bars, so this window cannot on its own
+# separate a fit from a fluke. The unloaded nine years are what carry the
+# result: 12,006 bets there against 793 in the fitted window.
+#
+# SWEEP. Stage 1 ran every detector family in both directions (2,802 configs):
+# Break of Structure, Double Top/Bottom, each candlestick pattern alone and
+# together with the location gate on/off, RSI and MACD divergence. Stage 2
+# refined the survivor over pivot_left x pivot_right x max_pivot_gap x the ATR%
+# band x ATR length x trend filter, and tried every OR-combination with the
+# pattern and divergence detectors (3,216 configs). Selection was by train hit
+# rate at a minimum of 300 train bets, with the grid boundary excluded.
+#
+#   pivot_left (right=1)     2     3     4     6     8    12    16    20    30
+#   6m bets                845   874   856   816   746   634   546   526   432
+#   train hit            55.7  56.5  55.7  56.7  58.4  58.2  58.8  60.5  59.1
+#   HOLDOUT hit          47.8  54.8  58.0  61.2  60.8  60.6  59.9  60.9  55.6
+#
+# Train rises with pivot_left all the way to the edge of the grid, the usual
+# overfitting signature; the holdout is flat at 60-61% from 6 to 20 and falls
+# off at 30. pivot_left=6 is the LOW end of that plateau, i.e. the most bets
+# the plateau offers, and that is the whole reason it was picked over the train
+# maximum. Six 15m bars is 90 minutes, which lines up with where the 5m (12-30
+# bars = 1-2.5 h) and 1m (90-150 bars = 1.5-2.5 h) presets landed independently:
+# the effect lives at a wall-clock scale, not a bar count.
+#
+#   preset        6m bets   6m hit   train    HOLDOUT   unloaded 9y   worst yr
+#   PM 15m BOS        793   58.64%   56.83%    62.55%   58.81% *      54.70% (25)
+#     * 2017-08 -> 2024-09-13, 9,405 bets, z +17.1. The 18 months right before
+#       the fit window (2024-09 -> 2026-03) score 55.17% on 2,601 bets.
+#
+# Per year on the full record, none of it fitted except the last six months:
+#   2017  56.23% (393)    2020  62.92% (1281)   2023  57.58% (1424)   2026  58.59% (1106)
+#   2018  58.93% (1142)   2021  58.72% (1635)   2024  57.10% (1585)
+#   2019  59.53% (1107)   2022  56.83% (1369)   2025  54.70% (1757)
+#
+# Every year clears 54%, and that includes 2017 and 2018, which sink the 5m and
+# 1m presets. At 15m a structure break resolves inside the same one-way move
+# that runs the fast presets over, so the fade holds even in the parabolic
+# years. The cost is volume: ~4.4 bets a day on 15m against ~15 on 5m.
+#
+# WHY THIS IS PROBABLY REAL. 58.06% on 12,799 bets over nine years (z +18.2),
+# with the never-loaded years scoring HIGHER than the fitted window. Bets run
+# 49% UP / 51% DOWN and hit 57.98% long / 58.13% short, so it is not
+# directional beta. A truncation test (60 sampled signals re-run with zero
+# future bars) reproduces every one with no phantoms.
+#
+# WHERE IT FAILS. The worst month in the fit window is 2026-04 at 52.5% on 118
+# bets; the other six range 55-64%. The worst year is 2025 at 54.70%. So expect
+# stretches at the coin-flip line lasting weeks, and read the 58% as a
+# multi-month average, not a monthly floor. The 0.50-odds EV (+0.17 per $1)
+# assumes a fill at even; a real 15m book prices away from it.
+#
+# NOT SHIPPED, and why. The user brief was bets AND hit rate, and OR-ing the
+# candlestick or divergence detectors into the preset does raise the bet count
+# (to 1,100-9,000), but every added bet lands at 52-54% - which is exactly the
+# base rate at which a 15m bar reverses the one before it (52.0% in the fit
+# window, 51.8% in the 18 months prior). Those detectors add volume at chance;
+# they were left off. pivot_left=20 hits 60.82% on the fitted window but only
+# 57.30% on the unloaded years against this preset's 58.81%, with 35% fewer
+# bets, so it was not shipped either - the in-window edge was the fit talking.
+_BOS_15M_COMMON = {
+    **_BOS_COMMON,
+    # The 5m band (0.08-1.5) is a near no-op on 15m bars (5th percentile of
+    # ATR% is 0.10) - a sanity floor, not a fitted value. The ATR band, ATR
+    # length, max_pivot_gap and trend filter were all swept and are inert or
+    # negative here.
+    "atr_pct_min": 0.08, "atr_pct_max": 1.5,
+    "max_pivot_gap": 60,
+}
+
+PRESETS.update({
+    # 793 bets, 58.64% hit on 2026-03..09; unloaded 2017..2024-09 58.81% on
+    # 9,405 bets; every year >= 54.70%. A 6-bar (90 min) left window - the
+    # most bets the holdout plateau offers.
+    "PM 15m BOS": {**_BOS_15M_COMMON, "pivot_left": 6, "pivot_right": 1},
+})
