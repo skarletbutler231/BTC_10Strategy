@@ -101,6 +101,12 @@ class Combined(Strategy):
     def presets(self) -> dict:
         subs = [sid for sid, _ in _available()]
         only = lambda keep: {f"use_{s}": (s in keep) for s in subs}
+        # each voter's own PM 15m preset, by name, where it has one
+        pm15 = {}
+        for sid, S in _available():
+            names = [n for n in S.presets() if n.startswith("PM 15m")]
+            if names:
+                pm15[f"preset_{sid}"] = names[0]
         return {
             # OR: any single signal passes through — the widest net.
             "Any signal (OR)": {"agreement_mode": "OR", **only(subs)},
@@ -114,6 +120,27 @@ class Combined(Strategy):
             "Validated trio (2 of 3)": {"agreement_mode": "AND", "min_agree": 2,
                                         "strict_same_direction": True,
                                         **only({"rsi_bb", "stoch_wick", "atr_devexh"})},
+            # --- 15-MINUTE: the same three rules with every voter on its own
+            # PM 15m preset (fitted per strategy on 2026-03-13 -> 09-13; see
+            # each strategy's file). Scored 2026-03-13 -> 09-13 and, unloaded,
+            # 2017-08-17 -> 2026-03-13 (moon_phase excluded as always):
+            #
+            #   preset                 6m bets  6m hit   unloaded 8.5y
+            #   PM 15m Any (OR)          6,731  55.65%   56.21% on  99,648 (z +39.2)
+            #   PM 15m Confirmed (2)     4,188  56.30%   57.27% on  62,382 (z +36.3)
+            #   PM 15m Conviction (3)    3,249  57.49%   57.56% on  48,134 (z +33.2)
+            #   (4 agree, not shipped)   2,596  58.51%   57.74% on  38,970 (z +30.6)
+            #
+            # Agreement buys hit rate monotonically, as on 5m, and the worst
+            # unloaded year rises with it (54.6 -> 55.7 -> 55.7 -> 56.4%, all 2025).
+            # Note the 22 voters share most of their signals (the level-break and
+            # oscillator-fade families overlap heavily), so "2 agree" is mostly
+            # one idea confirmed by a sibling, not two independent ideas.
+            "PM 15m Any (OR)": {"agreement_mode": "OR", **only(subs), **pm15},
+            "PM 15m Confirmed (2 agree)": {"agreement_mode": "AND", "min_agree": 2,
+                                           "strict_same_direction": True, **only(subs), **pm15},
+            "PM 15m Conviction (3 agree)": {"agreement_mode": "AND", "min_agree": 3,
+                                            "strict_same_direction": True, **only(subs), **pm15},
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

@@ -521,4 +521,81 @@ PRESETS: dict = {
         "use_trend_filter": True, "trend_logic": "With Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (18,312 bets
+    # there against 1,242 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. Stage 1 (864 configs) raced Fade/Follow x trigger {Extreme,
+    # Zero Cross, Momentum Turn} x osc_length {3..21} x score_threshold
+    # {0.3..0.85} x norm_atr_mult {1, 2, 4} x trend filter {off, With
+    # EMA200}; stage 2 (80) refined threshold {0.4..0.7} x normalisation
+    # {0.5..3.0} x length {5..14} inside Fade x Extreme; a third pass (~10)
+    # tried min_agree, the panel and the ATR band on the frozen pick.
+    #
+    # FOUND. The three 5m findings hold. Fade, not follow: pooled train
+    # 52.23% against 46.54%. Only the Extreme trigger earns — Zero Cross and
+    # Momentum Turn sit at 49-50% on both windows in both directions. And
+    # the score threshold is the dial: monotone on train (0.4: 54.36%, 0.5:
+    # 57.39, 0.6: 57.74, 0.7: 60.84) at a steep cost in bets (1,247 -> 93 a
+    # config). Length 7-14 is flat (55.8-56.7%), the normalisation is flat
+    # 0.5-2.0, min_agree is inert at these thresholds (as on 5m), and the
+    # With-Trend filter loses on both windows. The preset takes the interior
+    # of every marginal — a 10-bar panel, a 0.5 score, a 1.5-ATR
+    # normalisation — which is the rule-eligible row with the most even
+    # train halves (58.9 / 57.5): 1,242 window bets at 57.57% and 57.85% on
+    # 18,312 unloaded bets, every full year 57.4-59.8%. The whole
+    # neighbourhood scores 57.6-59.0% unloaded; nothing here is a fit.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     1,242  57.57%  58.16%   56.39%    57.85% (18,312, z +21.2)  57.37% (2026)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  48.94% (799)       2018  57.94% (1,814)     2019  59.13% (1,786)     2020  59.83% (2,054)
+    #   2021  57.40% (2,263)     2022  57.49% (1,903)     2023  59.37% (2,028)     2024  58.05% (2,496)
+    #   2025  57.53% (2,682)     2026  57.37% (1,729)
+    #
+    # Train halves 58.85% / 57.46%. About 6.7 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 56.80% on 3,970
+    # bets; whole record 19,554 bets, 57.83%, z +21.9. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 49% long in the
+    # window and both sides win (window long 56.22% / short 58.84%; unloaded
+    # 58.51% / 57.29%); the mirror on the same settings scores 42.43% in the
+    # window and 42.08% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-05 at 53.1% on
+    # 209 bets; the worst full year 2026 at 57.37%. 2017 is the losing year
+    # (48.9% — fading a parabolic run), and 2024-2026 run 57.4-58.1% against
+    # 59-60% in 2019-2020 and 2023. 2026-05 ran at 53.1% on 209 bets. The
+    # 0.50-odds EV the dashboard prints assumes a fill at even; a real 15m
+    # book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. Threshold 0.6 at length 7 with a 1.0 normalisation: 808
+    # window bets at 59.41% (holdout 60.55%), 58.95% unloaded (z +19.3) —
+    # the Selective tier. Length 7, 0.5, norm 2.0: 1,195 at 57.07%, 58.72%
+    # unloaded with the best worst year (57.10%). Length 7, 0.5, norm 1.0:
+    # 1,531 at 55.72%, 57.98% unloaded — the Volume tier. PM 5m Balanced
+    # carried over as-is: 229 window bets at 62.45% but 2022 at 48.5%
+    # unloaded; PM 5m Volume as-is: 646 at 57.89%, 57.84% unloaded.
+    # 1,242 bets, 57.57% hit on 2026-03..09; unloaded 2017-08..2026-03 57.85%
+    # on 18,312 bets (z +21.2); every full year >= 56.9%. The whole panel on a
+    # 10-bar lookback, faded past a 0.5 composite score.
+    "PM 15m Balanced": {
+        **_MOM_COMMON,
+        "osc_length": 10, "score_threshold": 0.50, "norm_atr_mult": 1.5,
+        "vol_atr_length": 14,
+        "use_trend_filter": False, "trend_logic": "With Trend",
+        "ma_type": "EMA", "ma_length": 200, "source": "close",
+    },
 }

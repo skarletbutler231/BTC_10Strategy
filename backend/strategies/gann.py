@@ -511,3 +511,128 @@ PRESETS: dict = {
         "break_buffer_atr": 0.1,
     },
 }
+
+# ---------------------------------------------------------------------------
+# 15-MINUTE preset. Fitted on the latest six months of BTCUSDT 15m, the same
+# protocol as the Reversal and Oscillators 15m presets and a different one from
+# the four above:
+#
+#   LOADED   2026-03-13 -> 2026-09-13   the six months the sweep ran on
+#     train  2026-03-13 -> 2026-07-13   selection happened here (4 months)
+#     hold   2026-07-13 -> 2026-09-13   scored after the pick was frozen (2)
+#   UNLOADED 2017-08-17 -> 2026-03-13   never read by the sweep; scored once at
+#                                       the end as the real out-of-sample check
+#
+# Six months of 15m is 17,700 bars. The unloaded 8.5 years carry the result:
+# 28,974 bets there against 1,844 in the fitted window.
+#
+# SWEEP. Stage 1 (288 configs) raced the structure: With/Against x break/bounce/
+# both x unit {0.002, 0.02, 0.1, 0.5} x ray set {1x1, core three, all nine} x
+# pivot_left {5..30}. Stage 2 (1,890 + 162) tuned pivot_left 3-180, pivot_right,
+# unit 0.0005-0.1, the ray set and the break buffer 0.1-1.2 inside the survivor.
+# Stage 3 (~60) tried max_anchor_age, the ATR band and length, the trend filter
+# and every ray subset on the frozen finalist. The rule was fixed before stage 2:
+# train bets >= 300, both train halves above 52%, every parameter off its grid
+# edge, then highest train hit — with the 5m file's caveat that at ~800 bets a
+# config the SE is 1.7pp and the argmax over 2,000 draws is noise, so the shape
+# was read off marginals and the rule's single best row was checked against them.
+#
+# WHAT REPLICATES FROM 5m. Fading the break is again the family (pooled stage 1,
+# train / holdout: Against+break 53.98 / 53.46; With+break 45.98 / 46.48, the
+# mirror). Bounces lose either way. pivot_left is a plateau from 20 to 60 on
+# train (56.05-56.70%) that falls back beyond 90; the holdout's rise to 61% at
+# pivot_left=180 is ~180 bets a config and did not survive the unloaded years
+# (pl=45 flat: 55.63%, worst year 53.8%). The break buffer is flat from 0.0 to
+# 0.3 and loses bets above it. max_anchor_age is byte-identical from 150 up. The
+# ATR band, ATR length and trend filter buy nothing (Against Trend EMA50 passes
+# 97% of signals; With Trend removes 75-97% of them).
+#
+# ===========================================================================
+# WHAT DOES NOT REPLICATE: ON 15m THE ANGLES EARN.
+# ===========================================================================
+# The 5m headline is that the fan collapses to a flat level (unit -> 0) and the
+# rays add nothing. On 15m the unit marginal still points down on train (0.0005:
+# 57.03% ... 0.1: 54.02%) but the holdout is flat at 56.6-57.1% for every unit
+# <= 0.01, and the direct test is unambiguous. Take PM 5m Volume's geometry
+# (pivot 20/1, buffer 0.3), switch the fan on at unit=0.01 with all nine rays,
+# and ask what the eight angled rays add on top of the flat 1x1 — the level's
+# bets are a strict subset of the fan's, so this is a clean split:
+#
+#                          level (1x1)        angled rays add        fan total
+#   15m, fitted window     634  58.20%      +1,210  57.19%        1,844  57.54%
+#   15m, unloaded 8.5y   9,537  56.58%     +19,437  57.08%       28,974  56.91%
+#   5m, same six months  1,997  55.48%      +3,189  52.24%        5,186  53.49%
+#
+# On 5m the angles dilute the level by 3pp, exactly as the 5m sweep found. On
+# 15m they match it, in the window and across 8.5 years the sweep never read.
+# Every ray earns alone (1x8 58.01%, 1x4 57.95, 1x3 57.81, 1x2 57.56, 1x1
+# 56.93, 2x1 57.37, 3x1 57.93, 4x1 58.28, 8x1 57.43 on 624-1,238 bets each) and
+# the volume comes from the steep side: the five rays 1x1..8x1 give 1,809 bets
+# against 706 for 1x8..1x1, because at unit=0.01 the shallow rays drift under
+# 0.4 ATR over a fan's life and sit on the level, while the 8x1 climbs 1.6 ATR
+# in 20 bars. A steep ray is a trailing line that price crosses when its move
+# stalls, and fading that cross is worth the same ~57% as fading the level.
+# Unit 0.01 is the knee of the all-nine marginal (0.005: 56.17% on 708 bets a
+# config, 0.01: 56.15% on 1,108, 0.02: 55.05% on 1,885), not an argmax.
+#
+# So the 15m preset is PM 5m Volume with the fan switched back on: the same
+# pivot, buffer and direction, unit 0.002 -> 0.01, one ray -> nine. Nothing
+# else changed.
+#
+# RESULTS — flat $1 per bet, next-candle direction
+#
+#   preset       6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+#   PM 15m Fan     1,844  57.54%  57.61%   57.40%    56.91% (28,974, z +23.5)  55.68% (2021)
+#
+# Per year on the full record, none of it fitted except the last six months:
+#   2017  51.36% (1252)   2020  58.67% (3332)   2023  58.30% (3048)   2026  57.73% (2567)
+#   2018  57.20% (3154)   2021  55.68% (3581)   2024  57.33% (3604)
+#   2019  56.72% (3149)   2022  57.27% (3220)   2025  56.25% (3911)
+#
+# Every full year sits in a 55.7-58.7% band, the 18 months right before the
+# window (2024-09 -> 2026-03) score 56.45% on 5,793 bets, and 2017 — the year
+# that breaks PM 5m Volume — is at chance rather than under it. Whole record:
+# 30,818 bets, 56.95%, z +24.4. About 10 bets a day. Read the hit rates against
+# 49.9%: 0.13% of 15m candles close exactly at their open (0.24% on 5m).
+#
+# CHECKS RUN AFTER THE PICK WAS FROZEN
+# * No look-ahead: the truncation test passes with 0 mismatches at three cuts.
+# * Not directional beta: bets run 50% long in the window and both sides win
+#   (window 56.88% / 58.19%, unloaded 57.29% / 56.60%); both fans earn alone
+#   (up 56.88%, down 58.19%).
+# * Not Reversal's PM 15m BOS relabelled: 23% of these bars are shared (Jaccard
+#   19.5%), and the exclusive 1,415 window bets score 56.61% (22,278 unloaded
+#   at 56.74%) against a 51.95% base rate for a 15m bar reversing the one
+#   before it. The 5m caveat about Trend Lines applies to the flat level, not
+#   to the steep rays, which Trend Lines does not draw.
+# * The mirror: With Signal on the same settings scores 42.41%.
+#
+# WHERE IT FAILS. The train halves are 60.03% / 55.31%, a wider spread than
+# the other 15m presets; the holdout (57.40%) and the unloaded years say the
+# second half is the honest number. The worst month in the window is 2026-06
+# at 55.9% on 313 bets, the worst full year 2021 at 55.68%. Expect weeks at
+# 54-55%. The 0.50-odds EV the dashboard prints assumes a fill at even; a real
+# 15m book prices away from it. Hit rate is the finding.
+#
+# NOT SHIPPED. The flat level at a 5-bar pivot (pivot 5/2, unit 0.005, 1x1,
+# buffer 0.3): 1,027 window bets at 57.64%, 16,184 unloaded at 57.41% with
+# every full year 56.5-58.8% — the highest out-of-sample hit rate in the sweep,
+# on 56% of the bets, and a 75-minute pivot that sits where Reversal (6 bars)
+# and Oscillators (RSI 7) landed independently. It shares 34% of its bars with
+# Reversal's BOS. An ATR floor of 0.20% lifts the fan to 58.54% and removes a
+# third of its bets. PM 5m Selective carried over unchanged prints 68.04% on
+# 219 window bets and 54.61% on 2,882 unloaded ones with 2021 and 2022 under
+# 50% — a fluke, and the reason a six-month number needs the other nine years.
+PRESETS.update({
+    # 1,844 bets, 57.54% hit on 2026-03..09; unloaded 2017-08..2026-03 56.91%
+    # on 28,974 bets (z +23.5); every full year 55.7-58.7%. PM 5m Volume with
+    # the fan switched on: unit 0.01, all nine rays. Ten bets a day.
+    "PM 15m Fan": {
+        **_GANN_COMMON,
+        "break_buffer_atr": 0.3,
+        "unit_atr_mult": 0.01,
+        "use_1x8": True, "use_1x4": True, "use_1x3": True, "use_1x2": True,
+        "use_1x1": True,
+        "use_2x1": True, "use_3x1": True, "use_4x1": True, "use_8x1": True,
+    },
+})

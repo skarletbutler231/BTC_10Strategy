@@ -309,6 +309,92 @@ class RsiBb(Strategy):
                 "use_bias_filter": False, "use_trend_filter": False,
                 "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
             },
+            # -------------------------------------------------------------------------
+            # 15-MINUTE preset, fitted on the latest six months of BTCUSDT
+            # 15m under the protocol the Reversal, Oscillators and Gann 15m
+            # presets use: LOADED 2026-03-13 -> 2026-09-13 (train 03-13 ->
+            # 07-13 for selection, holdout 07-13 -> 09-13 scored once after
+            # the pick was frozen); UNLOADED 2017-08-17 -> 2026-03-13, never
+            # read by any sweep stage and scored once at the end as the real
+            # out-of-sample check (29,560 bets there against 1,795 in the
+            # window). The selection rule was fixed before tuning: train
+            # bets >= 300, both train halves above 52%, every swept
+            # parameter off its grid edge, then highest train hit — read
+            # against the marginals, since at a few hundred bets a config
+            # the SE is 1.5-2.5pp and the single best row is mostly noise.
+            #
+            # SWEEP. Stage 1 (225 configs) raced direction {Both, Long Only,
+            # Short Only} x trend filter {off, With, Against EMA200} x
+            # rsi_length {5..21} x band {20/80..40/60} at BB 20/2.0. Stage 2
+            # (1,152) tuned rsi_length, band, bb_length {14..50}, bb_mult
+            # {1.5..3.0} and the %B band inside the two surviving
+            # directions. Stage 3 (~20) tried the ATR band, the candle
+            # filters, the bias filter, the trend filter and a weekend gate
+            # on the frozen pick. Candle filters at 0 throughout, as every
+            # 5m winner set them.
+            #
+            # FOUND. The window favours the SHORT side (Short Only pooled
+            # train 59.67% against Both 57.81%, holdout 55.47 vs 55.36) and
+            # the 5m sweep found the opposite, Long Only. Neither survives
+            # the other's years: Short Only scores 56.21% unloaded with 2017
+            # at 46.1%, Long Only 57.69% unloaded but 55.92% in the window.
+            # The side that wins is a regime, not a property of the setup,
+            # so the preset trades both; it is Wilder's 30/70 band on a
+            # 7-bar RSI with the stock 20/2.0 Bollinger and a 0-1 %B band,
+            # i.e. the setup with nothing fitted but the length. Marginals:
+            # rsi_length 5-10 flat (57.3-57.9% train), 14 loses the holdout;
+            # bb_mult rises monotonically on train (1.5: 56.85 -> 3.0:
+            # 58.72) but the wider band costs 6x the bets; bb_length 14-20
+            # beat 30-50 on the holdout (56.4 / 55.8 vs 54.6 / 54.0). The
+            # candle filters are actively harmful — min_close_recovery 0.3
+            # drops the pick to 52.86% (holdout 49.55%) and min_wick_ratio
+            # 0.3 to 53.03% — which extends the 5m finding that they earn
+            # nothing. The ATR band, ATR length and bias filter are inert or
+            # only remove bets.
+            #
+            # RESULTS — flat $1 per bet, next-candle direction
+            #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+            #   PM 15m Balanced     1,795  57.10%  57.43%   56.45%    56.94% (29,560, z +23.9)  55.28% (2022)
+            #
+            # Per year on the full record, none of it fitted except the last six months:
+            #   2017  49.34% (1,058)     2018  57.16% (3,445)     2019  59.12% (3,383)     2020  58.66% (3,408)
+            #   2021  56.48% (3,513)     2022  55.28% (3,569)     2023  58.31% (3,423)     2024  57.03% (3,635)
+            #   2025  55.39% (3,430)     2026  57.85% (2,491)
+            #
+            # Train halves 59.76% / 55.17%. About 9.7 bets a day. The 18
+            # months right before the window (2024-09 -> 2026-03) score
+            # 56.32% on 5,201 bets; whole record 31,355 bets, 56.95%, z
+            # +24.6. Read the hit rates against 49.9%: 0.13% of 15m candles
+            # close exactly at their open. Checks after the pick was frozen:
+            # the prefix (no look-ahead) test passes with 0 mismatches at
+            # three cut points; bets run 49% long in the window and both
+            # sides win (window long 55.92% / short 58.23%; unloaded 57.69%
+            # / 56.21%).
+            #
+            # WHERE IT FAILS. The worst month in the window is 2026-08 at
+            # 55.0% on 289 bets; the worst full year 2022 at 55.28%. Train
+            # halves are 59.76 / 55.17%, and 2026-08 ran at 55.0%. Expect
+            # weeks at 54-55%. The 0.50-odds EV the dashboard prints assumes
+            # a fill at even; a real 15m book prices away from it. Hit rate
+            # is the finding.
+            #
+            # NOT SHIPPED. The rule's own single best row (Both, RSI 10, BB
+            # 20/2.5): 570 window bets at 59.12%, but 56.30% unloaded with
+            # two years at 53.8% — it is on the same plateau on a third of
+            # the bets. With Trend EMA200 on the pick: 337 bets at 61.42%
+            # with train 61.40% and holdout 61.47%, a genuine high-hit
+            # variant at a fifth of the volume. Weekend-only: 545 bets at
+            # 58.17%. The 5m Wknd/Hi Hit families were not re-swept at 15m;
+            # their presets carried over as-is produce 19-159 window bets.
+            "PM 15m Balanced": {
+                "direction": "Both",
+                "rsi_length": 7, "rsi_oversold": 30, "rsi_overbought": 70,
+                "bb_length": 20, "bb_mult": 2.0,
+                "pctb_upper": 1.0, "pctb_lower": 0.0,
+                "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_bias_filter": False, "use_trend_filter": False,
+                "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

@@ -434,4 +434,81 @@ PRESETS: dict = {
         "pivot_left": 20, "pivot_right": 3,
         "cluster_tol_atr": 1.5, "min_touches": 3, "max_levels": 30,
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (22,423 bets
+    # there against 1,394 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,620 configs raced Against/With Signal x trigger
+    # {break, bounce} x pivot_left {3..30} x pivot_right {1..3} x
+    # cluster_tol_atr {0.5..1.5} x min_touches {1..3} x break_buffer_atr {0,
+    # 0.3, 0.8}; a second pass (~12) tried max_levels, level age, retire-on-
+    # break and the ATR band on the frozen pick.
+    #
+    # FOUND. Fade the break, as on 5m: pooled train 51.17% against 48.81%
+    # for taking it, and bounces are a coin flip either way. Inside the fade
+    # every marginal is flat to within a point (pivot_left 3-30: 54.8-55.9%
+    # train; touches 1-3: 55.2-56.0; cluster width 0.5-1.5: 55.0-55.9;
+    # buffer 0: 55.5, 0.3: 54.9, 0.8: 56.9) — the level is the edge and its
+    # exact construction is not. So the pick is the frontier point with the
+    # most bets that still holds out of sample: a 6-bar (90 min) pivot
+    # confirmed by 2 bars, a 1-ATR cluster, one touch, no buffer — PM 5m
+    # Level Break Volume's settings with the pivot rescaled to 15m's wall-
+    # clock, 1,394 window bets at 56.10% and 56.42% on 22,423 unloaded bets.
+    # The rule's own top row (12/2, 0.5-ATR cluster, two touches) prints
+    # 58.58% in the window and 55.58% unloaded with 2021 at 53.8%; the
+    # textbook three-touch levels lose on the holdout (min_touches 3 at 6/2:
+    # 50-51.5%). max_levels, level age and retire-on-break are inert above
+    # sane values; the ATR band is inert.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Level Break  1,394  56.10%  56.92%   54.51%    56.42% (22,423, z +19.2)  55.26% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  53.13% (830)       2018  55.81% (2,385)     2019  56.51% (2,419)     2020  59.75% (2,589)
+    #   2021  55.55% (2,650)     2022  55.26% (2,606)     2023  56.45% (2,682)     2024  56.23% (2,815)
+    #   2025  56.57% (2,892)     2026  56.54% (1,949)
+    #
+    # Train halves 57.42% / 56.43%. About 7.6 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 55.82% on 4,319
+    # bets; whole record 23,817 bets, 56.40%, z +19.8. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 50% long in the
+    # window and both sides win (window long 54.27% / short 57.95%; unloaded
+    # 57.00% / 55.88%); the mirror on the same settings scores 43.83% in the
+    # window and 43.52% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-06 at 53.0% on
+    # 217 bets; the worst full year 2022 at 55.26%. The thinnest margin of
+    # the level-break family on 15m: 56.4% unloaded, 2022 at 55.3%, and a
+    # 54.51% holdout on 477 bets. CHoCH and Gann's fan preset fade the same
+    # breaks with more edge. The 0.50-odds EV the dashboard prints assumes a
+    # fill at even; a real 15m book prices away from it. Hit rate is the
+    # finding.
+    #
+    # NOT SHIPPED. The rule's row (12/2, cluster 0.5, two touches): 676
+    # window bets at 58.58%, 55.58% unloaded. 12/2 cluster 1.0 one touch:
+    # 1,077 at 56.82%, 55.88% unloaded. 6/2 cluster 0.5 one touch: 1,697 at
+    # 55.69%, 56.10% on 27,679 unloaded bets — the Volume tier. PM 5m Level
+    # Break Volume carried over as-is: 761 at 56.11%, 55.71% unloaded;
+    # Confirmed as-is: 318 with a 45.4% first train half.
+    # 1,394 bets, 56.10% hit on 2026-03..09; unloaded 2017-08..2026-03 56.42%
+    # on 22,423 bets (z +19.2). A 6-bar (90 min) pivot level, one touch, the
+    # first close through it faded.
+    "PM 15m Level Break": {
+        **_SR_COMMON,
+        "pivot_left": 6, "pivot_right": 2,
+        "cluster_tol_atr": 1.0, "min_touches": 1, "max_levels": 20,
+        "max_level_age_bars": 1000,
+    },
 }

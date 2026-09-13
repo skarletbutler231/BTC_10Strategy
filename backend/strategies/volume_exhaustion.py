@@ -400,4 +400,89 @@ PRESETS: dict = {
         "ma_type": "SMA", "ma_length": 100, "source": "close",
         "predict_direction": "Reversion",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (16,348 bets
+    # there against 1,212 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 720 configs raced Reversion/Continuation x
+    # vol_ma_length {10, 20, 50} x vol_spike_mult {1.5..4.0} x rank gate
+    # {off, 90th pct} x min_body_ratio {0..0.6} x trend filter {off,
+    # Against, With SMA100}; two extension passes (~35) pushed the body to
+    # 0.8 and the spike down to 1.0 because both marginals ran to a grid
+    # edge, and tried the wick filter, the MA length and the ATR band on the
+    # frozen family.
+    #
+    # FOUND. Reversion is the family and Continuation its mirror (pooled
+    # train 55.04% vs 44.92%). Then a negative result about the premise: on
+    # 15m the VOLUME carries almost nothing and the BAR does. The spike
+    # threshold is flat on the unloaded years from 1.0x to 2.0x (55.8, 56.0,
+    # 56.0, 55.3%) and only trades bets for in-window hit above that (4.0x:
+    # 59.21% train, 54.74% holdout); the rank gate changes nothing (54.97 vs
+    # 55.14 train); but min_body_ratio is monotone in both windows (0.0:
+    # 52.96% train / 55.02% holdout -> 0.6: 58.25 / 60.59) and keeps rising
+    # to 0.8 on the unloaded years (55.3 -> 56.2%) as the bets fall away.
+    # Fading a decisive 15m bar earns ~56% whether or not its volume was a
+    # climax. The Against-Trend SMA100 filter that every 5m tier carries
+    # adds ~1.7pp on train (56.69 vs 55.00) and nothing on the unloaded
+    # years (55.1 vs 55.3% on the pick's family), so it is off; the wick
+    # filter is destructive (0.3: 52.23% in the window, 52.39% unloaded).
+    # The preset takes the interior of both extended grids: a 1.5x spike on
+    # a 20-bar volume mean, a 0.6 body, no rank gate, no trend filter.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     1,212  58.25%  58.07%   58.63%    56.04% (16,348, z +15.4)  54.03% (2021)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  52.83% (672)       2018  57.65% (1,594)     2019  55.77% (1,578)     2020  57.89% (1,686)
+    #   2021  54.03% (1,849)     2022  54.14% (1,714)     2023  57.65% (1,856)     2024  56.13% (2,332)
+    #   2025  55.43% (2,576)     2026  58.90% (1,703)
+    #
+    # Train halves 59.90% / 56.32%. About 6.6 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 55.84% on 3,809
+    # bets; whole record 17,560 bets, 56.19%, z +16.4. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 51% long in the
+    # window and both sides win (window long 57.49% / short 59.03%; unloaded
+    # 56.90% / 55.19%); the mirror on the same settings scores 41.58% in the
+    # window and 43.89% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-07 at 51.2% on
+    # 215 bets; the worst full year 2021 at 54.03%. THE WEAKEST 15m PRESET
+    # OUT OF SAMPLE: 56.0% unloaded against 58-59% in the window, and
+    # 2021-2022 sit at 54.0-54.1% and 2019 at 55.8%. The edge is
+    # concentrated in 2020 and 2023-2026 (57-60%); read the 58% as the
+    # regime, not the strategy. The 0.50-odds EV the dashboard prints
+    # assumes a fill at even; a real 15m book prices away from it. Hit rate
+    # is the finding.
+    #
+    # NOT SHIPPED. The rule's own top row (spike 2.5x, rank 90, body 0.4):
+    # 493 window bets at 59.03%, but 53.74% unloaded with 2021 and 2022 at
+    # 50.2 / 50.5% — in-window fit. Body 0.7 at spike 1.5x: 802 bets at
+    # 59.10%, 56.41% unloaded, on two thirds of the bets. PM 5m Balanced
+    # carried over unchanged prints 62.38% on 319 window bets and 54.40% on
+    # 4,482 unloaded ones with 2022 at 47.7%. PM 5m Volume as-is: 56.63%
+    # window, 53.02% unloaded.
+    # 1,212 bets, 58.25% hit on 2026-03..09; unloaded 2017-08..2026-03 56.04%
+    # on 16,348 bets (z +15.4) — see the block above: the body carries the
+    # edge on 15m, the volume spike barely does.
+    "PM 15m Balanced": {
+        "vol_ma_length": 20, "vol_spike_mult": 1.5,
+        "vol_rank_lookback": 200, "vol_rank_min": 0,
+        "min_body_ratio": 0.6, "wick_min": 0.0, "vol_atr_length": 14,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": False, "trend_logic": "Against Trend",
+        "ma_type": "SMA", "ma_length": 100, "source": "close",
+        "predict_direction": "Reversion",
+    },
 }

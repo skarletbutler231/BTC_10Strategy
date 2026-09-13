@@ -456,4 +456,85 @@ PRESETS: dict = {
         "ma_type": "SMA", "ma_length": 200, "source": "close",
         "predict_direction": "Trend Resume",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (7,824 bets
+    # there against 479 in the window). The selection rule was fixed before
+    # tuning: train bets >= 300, both train halves above 52%, every swept
+    # parameter off its grid edge, then highest train hit — read against the
+    # marginals, since at a few hundred bets a config the SE is 1.5-2.5pp
+    # and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,200 configs raced Trend Resume/Retrace Deeper x
+    # swing_lookback {8..72} x min_leg_atr {2, 4, 6} x fib_level {0.382,
+    # 0.5, 0.618, 0.786, 0.85} x tolerance {0.05, 0.1} x opposing bar on/off
+    # x trend filter {off, Against SMA50}; a second pass (~10) tried the
+    # opposing-bar size, the fresh-touch rule, min_leg_bars and the ATR band
+    # on the frozen pick.
+    #
+    # FOUND. Trend Resume is the family (pooled train 52.91% vs 48.66% for
+    # Retrace Deeper) and it is a thin one on 15m: the pooled numbers barely
+    # clear 52%, and the edge lives at the deep levels — the fib_level
+    # marginal is monotone (0.382: 50.88% train / 50.62% holdout; 0.618:
+    # 53.09 / 52.14; 0.786: 56.19 / 54.66) as it was on 5m. The swing needs
+    # to be long (lookback 48 = 12 h beats 8-24 by 1-4pp on both windows)
+    # and the opposing-bar entry gate adds 2.3pp on train. The rule's row
+    # sits at 0.618 — the golden ratio itself, the one level with a story
+    # behind it — on a 48-bar swing of at least 4 ATR, entered on a bar
+    # still pushing against the bet: 479 bets at 56.78% in the window and
+    # 56.57% on 7,824 unloaded bets, the most bets of anything in the family
+    # that holds out of sample. The 0.786 rows score higher in the window
+    # (59.07% on 430 bets at lookback 24) but not out of it (56.69%); the
+    # Against-Trend SMA50 filter the 5m Balanced carries is worth +0.5pp
+    # unloaded on this row and costs a quarter of the bets, so it is off;
+    # the ATR band and fresh-touch rule are inert.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced       479  56.78%  57.37%   55.62%    56.57% (7,824, z +11.6)  54.14% (2018)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  54.22% (249)       2018  54.14% (809)       2019  57.70% (941)       2020  57.60% (908)
+    #   2021  55.31% (875)       2022  55.31% (960)       2023  59.51% (1,072)     2024  56.62% (906)
+    #   2025  56.61% (931)       2026  56.13% (652)
+    #
+    # Train halves 58.54% / 56.13%. About 2.6 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 56.27% on 1,395
+    # bets; whole record 8,303 bets, 56.58%, z +12.0. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 52% long in the
+    # window and both sides win (window long 59.68% / short 53.68%; unloaded
+    # 56.67% / 56.47%); the mirror on the same settings scores 57.05% in the
+    # window and 54.47% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-09 at 46.2% on
+    # 39 bets; the worst full year 2018 at 54.14%. Thin: ~2.7 bets a day,
+    # and the window months swing widely. 2018 is the worst full year at
+    # 54.1%, 2021 and 2022 at 55.3%; 2026-09 opened at 46% on 39 bets. The
+    # 0.50-odds EV the dashboard prints assumes a fill at even; a real 15m
+    # book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. 0.786 at lookback 24 without the opposing bar: 430 window
+    # bets at 59.07% (train 61.69, holdout 55.03), 56.69% unloaded. 0.618
+    # with Against Trend SMA50: 380 at 55.79%, 57.14% unloaded. PM 5m
+    # Balanced carried over as-is (lookback 72, 0.85, Against SMA50): 148
+    # window bets, 46.15% holdout — the 5m geometry does not transfer. PM 5m
+    # Volume as-is: 369 at 58.54%, 55.96% unloaded.
+    # 479 bets, 56.78% hit on 2026-03..09; unloaded 2017-08..2026-03 56.57% on
+    # 7,824 bets (z +11.6). The 0.618 retracement of a 12-hour swing, entered
+    # on a bar still pushing against the bet.
+    "PM 15m Balanced": {
+        "swing_lookback": 48, "min_leg_atr": 4.0, "min_leg_bars": 1,
+        "fib_level": 0.618, "fib_tolerance": 0.1, "require_fresh_touch": True,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
+        "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": False, "trend_logic": "Against Trend",
+        "ma_type": "SMA", "ma_length": 50, "source": "close",
+        "predict_direction": "Trend Resume",
+    },
 }

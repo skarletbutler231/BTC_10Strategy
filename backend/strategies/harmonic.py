@@ -705,4 +705,86 @@ PRESETS: dict = {
         "use_trend_filter": True, "trend_logic": "Against Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (9,046 bets
+    # there against 539 in the window). The selection rule was fixed before
+    # tuning: train bets >= 300, both train halves above 52%, every swept
+    # parameter off its grid edge, then highest train hit — read against the
+    # marginals, since at a few hundred bets a config the SE is 1.5-2.5pp
+    # and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 2,304 configs raced Reversal/Continuation x AB=CD
+    # on/off x pivot_left {2..8} x pivot_right {1..3} x ratio_tolerance
+    # {0.05..0.15} x min_xa_atr {1.5..7} x PRZ entry {Wick Touch, Close
+    # Inside} x trend filter {off, Against SMA50}; a second pass (~20)
+    # extended the tolerance to 0.25 and tried the XA size, the PRZ width
+    # and overshoot, the CD-zone rule and the ATR band on the frozen pick.
+    #
+    # FOUND. Reversal is the family and Continuation its mirror (pooled
+    # train 56.03% vs 45.37%). The 5m findings hold: the six XABCD patterns
+    # without AB=CD beat the set with it (56.98% / 55.26% pooled against
+    # 55.56 / 54.10 — AB=CD is volume at a lower rate), Close Inside beats
+    # Wick Touch by 0.7pp, the Against-Trend SMA50 filter is worth about a
+    # point on train, and the geometry is mostly inert (pivot_left 2-8
+    # within 1pp, pivot_right 1-3 within 0.7pp, XA 1.5-3 equal, the PRZ
+    # width and overshoot flat). The ratio tolerance is the one real dial
+    # and it is NOT a fit: 0.10 gives 381 window bets at 58.79%, 0.15 gives
+    # 539 at 57.51%, 0.20 gives 657 at 57.53%, 0.25 gives 732 at 56.97%, and
+    # all four score 57.6-58.5% on the unloaded years — looser Fibonacci
+    # ratios add bets at the same hit rate, which is the 5m file's finding
+    # about the ratios restated. The preset takes 0.15, the rule's row: six
+    # patterns, 3/2 pivots, XA >= 3 ATR, close inside the PRZ, faded against
+    # the 50-bar SMA.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced       539  57.51%  58.57%   55.56%    58.47% (9,046, z +16.1)  56.54% (2021)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  52.55% (333)       2018  58.46% (1,023)     2019  59.28% (1,051)     2020  59.47% (1,098)
+    #   2021  56.54% (1,040)     2022  61.83% (1,116)     2023  58.28% (1,021)     2024  58.00% (1,112)
+    #   2025  57.64% (1,053)     2026  57.59% (738)
+    #
+    # Train halves 59.65% / 57.54%. About 2.9 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 57.55% on 1,583
+    # bets; whole record 9,585 bets, 58.41%, z +16.5. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 47% long in the
+    # window and both sides win (window long 55.08% / short 59.72%; unloaded
+    # 58.19% / 58.70%); the mirror on the same settings scores 55.00% in the
+    # window and 43.75% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-07 at 50.5% on
+    # 107 bets; the worst full year 2021 at 56.54%. Thin — ~3 bets a day —
+    # and 2026-07 ran at 50.5% on 107 bets. 2021 is the worst full year at
+    # 56.5%; the rest are 57.6-61.8%. The 0.50-odds EV the dashboard prints
+    # assumes a fill at even; a real 15m book prices away from it. Hit rate
+    # is the finding.
+    #
+    # NOT SHIPPED. Tolerance 0.20 for volume: 657 window bets at 57.53%,
+    # 57.57% unloaded. min_xa_atr 2.0: 692 at 58.09% (holdout 55.33%). AB=CD
+    # on at XA 1.5: 1,144 at 56.03%, 57.32% on 19,332 unloaded bets (z
+    # +20.4) — the widest net that still holds. Tolerance 0.10: 381 at
+    # 58.79% with 60.00 / 60.00 train halves, 58.23% unloaded, but 2017 at
+    # 47%. PM 5m Balanced carried over as-is: 258 window bets with a 49.44%
+    # holdout; PM 5m Volume as-is: 837 at 53.88%, 55.45% unloaded — the 5m
+    # geometry needs the 15m sweep.
+    # 539 bets, 57.51% hit on 2026-03..09; unloaded 2017-08..2026-03 58.47% on
+    # 9,046 bets (z +16.1); every full year >= 56.5%. Six XABCD patterns, no
+    # AB=CD, entered on a close inside the PRZ and faded against the SMA50.
+    "PM 15m Balanced": {
+        **_HARMONIC_COMMON, **_NO_ABCD,
+        "pivot_left": 3, "pivot_right": 2, "ratio_tolerance": 0.15,
+        "min_xa_atr": 3.0, "max_prz_atr": 2.0, "require_cd_zone": True,
+        "prz_entry": "Close Inside",
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": True, "trend_logic": "Against Trend",
+        "ma_type": "SMA", "ma_length": 50, "source": "close",
+    },
 }

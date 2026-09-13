@@ -843,4 +843,93 @@ PRESETS: dict = {
         "use_trend_filter": False, "trend_logic": "With Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (6,872 bets
+    # there against 478 in the window). The selection rule was fixed before
+    # tuning: train bets >= 300, both train halves above 52%, every swept
+    # parameter off its grid edge, then highest train hit — read against the
+    # marginals, since at a few hundred bets a config the SE is 1.5-2.5pp
+    # and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,152 configs raced Follow/Fade Count x setup
+    # {Wave 3, Wave 5, Wave 3 + 5, Post-Impulse Reversal} x entry {Pivot
+    # Confirm, Retrace Zone} x pivot_atr_mult {1.5..6} x wave-2 band
+    # {shallow, deep, any} x opposing bar {off, on, on 0.5 ATR} x trend
+    # filter {off, Against SMA50}; a second pass (~12) tried the impulse
+    # rules, the wave-1 floor, setup age, min_pivot_bars and the ATR band on
+    # the frozen pick.
+    #
+    # FOUND. The 5m structure repeats exactly: the count earns in two
+    # equivalent lanes and loses in the other two. Following the count works
+    # only from inside the retrace zone (Wave 3 pooled 54.57% train / 53.90%
+    # holdout) and fading it works only on the pivot confirmation (54.86 /
+    # 53.84); the two crossed lanes are 48-49% in both windows. The lanes
+    # are the same trade — buy wave 2's pullback before or after its low is
+    # confirmed — and neither is worth more than 55% pooled, which is what
+    # the 5m file found. The rule's row is the Wave-3 zone entry on a
+    # 2.5-ATR pivot with a deep wave 2 (0.618-1.0 of wave 1) and a 0.5-ATR
+    # opposing bar: 478 window bets at 59.62% and 57.32% on 6,872 unloaded
+    # bets. The opposing bar is the one gate that earns (off: 56.91% window,
+    # 52.17% holdout); the impulse rules, the wave-1 floor and the setup age
+    # are inert; the Against-Trend filter costs bets for nothing; larger
+    # pivots (4-6 ATR) are the 5m geometry and do not transfer (pivot 4.0:
+    # 216 bets, 54.68% unloaded with 2021 at 50.7%).
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced       478  59.62%  62.31%   54.14%    57.32% (6,872, z +12.1)  54.57% (2025)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  55.88% (204)       2018  57.58% (712)       2019  59.53% (719)       2020  57.05% (780)
+    #   2021  55.66% (821)       2022  57.97% (847)       2023  60.09% (862)       2024  56.17% (899)
+    #   2025  54.57% (865)       2026  59.91% (641)
+    #
+    # Train halves 65.24% / 59.24%. About 2.6 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 55.67% on 1,306
+    # bets; whole record 7,350 bets, 57.47%, z +12.8. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 52% long in the
+    # window and both sides win (window long 59.51% / short 59.74%; unloaded
+    # 57.78% / 56.87%); the mirror on the same settings scores 80.00% in the
+    # window and 55.72% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-09 at 46.7% on
+    # 30 bets; the worst full year 2025 at 54.57%. Train halves 65.2 / 59.2%
+    # and a 54.14% holdout on 157 bets — the widest train-to-holdout gap of
+    # the 15m presets — against a steadier 57.3% unloaded; ~2.7 bets a day.
+    # 2025 is the worst full year at 54.6%. The 0.50-odds EV the dashboard
+    # prints assumes a fill at even; a real 15m book prices away from it.
+    # Hit rate is the finding.
+    #
+    # NOT SHIPPED. The opposing bar at 0 ATR (any opposing close): 585
+    # window bets at 58.46%, 57.29% unloaded. Wave 3 + 5 with any wave-2
+    # depth: 687 at 56.62%, 56.62% unloaded — the Volume tier. Pivot 1.5
+    # ATR: 378 at 60.05%, 58.24% unloaded on fewer bets. The Fade-Count lane
+    # (Wave 3, Pivot Confirm): 445 at 57.75%, 56.92% unloaded. PM 5m
+    # Balanced carried over unchanged prints 67.35% on 98 window bets and
+    # 53.87% on 1,474 unloaded ones with 2019 at 49.2% — a small-sample
+    # fluke.
+    # 478 bets, 59.62% hit on 2026-03..09; unloaded 2017-08..2026-03 57.32% on
+    # 6,872 bets (z +12.1). Wave 3 entered inside a deep wave-2 retrace, on a
+    # bar still pushing against the bet.
+    "PM 15m Balanced": {
+        "atr_length": 14, "pivot_atr_mult": 2.5, "min_pivot_bars": 2,
+        "min_wave1_atr": 3.0,
+        "enforce_impulse_rules": False,
+        "wave2_min_retrace": 0.618, "wave2_max_retrace": 1.0,
+        "wave4_min_retrace": 0.0, "wave4_max_retrace": 3.0,
+        "trade_setup": SETUP_W3, "entry_mode": MODE_ZONE,
+        "max_setup_age_bars": 48,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
+        "vol_atr_length": 20, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "predict_direction": "Follow Count",
+        "use_trend_filter": False, "trend_logic": "Against Trend",
+        "ma_type": "SMA", "ma_length": 50, "source": "close",
+    },
 }

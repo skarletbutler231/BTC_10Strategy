@@ -540,4 +540,87 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
         "predict_direction": "Reversion",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (21,208 bets
+    # there against 1,303 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 720 configs raced Reversion/Continuation x five
+    # horizon triples (4/16/48 — the 5m defaults rescaled to 15m — 6/12/24,
+    # 8/24/72, 12/24/48, 12/48/144) x z_threshold {1.5..3.0} x min_agree {1,
+    # 2, 3} x opposing bar {off, on, on with 0.5 ATR} x trend filter {off,
+    # With EMA200}; a second pass (~10) tried the opposing-bar size,
+    # require_fast and the ATR band on the frozen pick.
+    #
+    # FOUND. Reversion is the family and Continuation its mirror (pooled
+    # train 56.18% vs 44.85%). Two of the 5m findings transfer and one does
+    # not. The OPPOSING-BAR entry gate transfers: at the pick's geometry it
+    # lifts the unloaded years from 56.34% (off) to 57.21% (0.5 ATR), and
+    # its marginal is monotone in both windows. The z threshold transfers:
+    # monotone on train (1.5: 55.51 -> 3.0: 58.26) at a steep cost in bets,
+    # with 2.0 the knee. The AGREEMENT premise does not: pooled train says
+    # three horizons beat two beat one (57.72 / 57.01 / 55.63) but on 8.5
+    # unloaded years the order reverses (min_agree 1: 57.56%, 2: 57.21%, 3:
+    # 56.20%) — stretched on any one horizon is as good a fade as stretched
+    # on all three, which is why every 5m tier shipped with min_agree = 1.
+    # The preset keeps the train-selected 2 (the rule's protocol) and
+    # 12/24/48 bars — 3 h / 6 h / 12 h on 15m, the 5m Volume's own bar
+    # counts, which beat the wall-clock rescaling 4/16/48 on the unloaded
+    # years (57.21 vs 56.40%). The With-Trend filter loses 1.7pp on the
+    # holdout and 80% of the bets; require_fast and the ATR band are inert.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     1,303  57.33%  57.99%   56.04%    57.21% (21,208, z +21.0)  55.11% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  51.66% (751)       2018  59.03% (2,221)     2019  58.62% (2,373)     2020  58.78% (2,511)
+    #   2021  55.52% (2,428)     2022  55.11% (2,522)     2023  58.28% (2,574)     2024  57.21% (2,657)
+    #   2025  56.95% (2,632)     2026  57.44% (1,842)
+    #
+    # Train halves 58.64% / 57.31%. About 7.1 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 56.98% on 3,961
+    # bets; whole record 22,511 bets, 57.22%, z +21.7. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 50% long in the
+    # window and both sides win (window long 56.09% / short 58.56%; unloaded
+    # 57.82% / 56.62%); the mirror on the same settings scores 46.15% in the
+    # window and 50.81% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-04 at 54.2% on
+    # 225 bets; the worst full year 2022 at 55.11%. Train halves 58.6 /
+    # 57.3%; 2022 is the worst full year at 55.1%, and 2021-2022 run 55-56%
+    # against 58-59% either side. The 0.50-odds EV the dashboard prints
+    # assumes a fill at even; a real 15m book prices away from it. Hit rate
+    # is the finding.
+    #
+    # NOT SHIPPED. min_agree 1 at the same settings: 2,273 window bets at
+    # 56.62% and 57.56% on 35,677 unloaded bets (z +28.5), worst year 56.22%
+    # — more bets, a better unloaded hit and a better worst year than the
+    # preset, kept out only by the rule's grid-edge test and the in-window
+    # ordering; it is the 5m presets' own setting and the better choice if
+    # volume matters. The rule's top row (z 2.5): 536 at 60.26%, 56.77%
+    # unloaded with 2022 at 53.2%. With Trend EMA200: 206 at 58.25%, 60.52%
+    # unloaded — thin. PM 5m Volume as-is: 475 at 58.32%, 56.49% unloaded.
+    # 1,303 bets, 57.33% hit on 2026-03..09; unloaded 2017-08..2026-03 57.21%
+    # on 21,208 bets (z +21.0). 3h / 6h / 12h horizons, two agreeing past 2
+    # sigma, entered only on a bar still pushing against the bet.
+    "PM 15m Balanced": {
+        "h_fast": 12, "h_mid": 24, "h_slow": 48, "z_threshold": 2.0,
+        "min_agree": 2, "require_fast": False, "vol_atr_length": 14,
+        "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "require_opposing_bar": True, "opposing_bar_min_atr": 0.5,
+        "use_trend_filter": False, "trend_logic": "With Trend",
+        "ma_type": "EMA", "ma_length": 200, "source": "close",
+        "predict_direction": "Reversion",
+    },
 }

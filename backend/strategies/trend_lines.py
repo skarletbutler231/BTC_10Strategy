@@ -441,3 +441,84 @@ PRESETS.update({
     # Lowest buffer at which every full year 2018-2026 clears its own ceiling.
     "PM 1m Line Break Balanced": {**_LINE_1M_COMMON, "break_buffer_atr": 0.5},
 })
+
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (10,292 bets
+    # there against 705 in the window). The selection rule was fixed before
+    # tuning: train bets >= 300, both train halves above 52%, every swept
+    # parameter off its grid edge, then highest train hit — read against the
+    # marginals, since at a few hundred bets a config the SE is 1.5-2.5pp
+    # and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 864 configs raced Against/With Signal x trigger
+    # {break, bounce} x pivot_left {3..45} x pivot_right {1, 2} x
+    # require_direction on/off x max_slope_atr {0.1, 0.5, 2.0} x
+    # break_buffer_atr {0, 0.3, 0.8}; a second pass (~12) tried the buffer
+    # neighbourhood, the pivot gap and line age, the ATR band and one side
+    # at a time on the frozen pick.
+    #
+    # FOUND. Fade the break, as on 5m and 1m: pooled train 51.09% against
+    # 48.89% for taking it, and bounces are a coin flip either way (49.99 /
+    # 49.96). The 5m finding that flat and counter-sloping lines earn as
+    # much as trend-following ones holds (require_direction off 54.61% vs on
+    # 53.93% train; the slope cap is inert from 0.1 to 2.0 ATR/bar). The
+    # rule's row is a 6-bar (90 min) pivot with a 0.8-ATR buffer: 705 window
+    # bets at 57.45% and 56.54% on 10,292 unloaded bets — and 6 bars is
+    # where Reversal, CHoCH and Gann's flat-level alternative all landed on
+    # 15m, the wall-clock scale again. The buffer is the one dial that
+    # matters here (0.5: 54.08% window / 55.62% unloaded; 0.8: 57.45 /
+    # 56.54; 1.2: 58.93 / 56.32) and 0.8 is the knee. The long pivots the
+    # marginal prefers on the window (20-45 bars, 57-63% holdout) do not
+    # survive the unloaded years (20/2: 55.65%, 30/2: 54.40%) — a 2026
+    # artefact, as it was for Gann. Pivot gap, line age and the ATR band are
+    # inert. Resistance-line breaks (60.23%) carry more than support-line
+    # breaks (54.82%) in the window; both sides are kept.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Line Break     705  57.45%  58.87%   54.73%    56.54% (10,292, z +13.3)  53.35% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  51.75% (342)       2018  56.32% (1,147)     2019  58.51% (1,140)     2020  60.41% (1,114)
+    #   2021  55.34% (1,160)     2022  53.35% (1,194)     2023  55.31% (1,291)     2024  56.81% (1,322)
+    #   2025  57.51% (1,332)     2026  57.70% (955)
+    #
+    # Train halves 59.29% / 58.47%. About 3.8 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 56.84% on 1,974
+    # bets; whole record 10,997 bets, 56.60%, z +13.8. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 51% long in the
+    # window and both sides win (window long 54.82% / short 60.23%; unloaded
+    # 56.72% / 56.35%); the mirror on the same settings scores 42.55% in the
+    # window and 43.38% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-07 at 50.0% on
+    # 124 bets; the worst full year 2022 at 53.35%. A modest edge: 56.5%
+    # unloaded with 2022 at 53.4% and 2021 / 2023 at 55.3%; 2026-07 ran at
+    # 50.0% on 124 bets. As the 5m file notes, this and Gann's flat level
+    # are largely the same trade; on 15m Gann's fan preset is the stronger
+    # of the two. The 0.50-odds EV the dashboard prints assumes a fill at
+    # even; a real 15m book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. Buffer 1.2: 504 window bets at 58.93% (holdout 59.78%),
+    # 56.32% unloaded. Buffer 0.5: 871 at 54.08%. Pivot 20/1 with no buffer:
+    # 544 at 57.17%, 56.15% unloaded. PM 5m Line Break Volume carried over
+    # as-is: 414 at 56.52%, 56.09% unloaded; Balanced as-is: 329 at 55.93%,
+    # 55.95% unloaded with 2025 at 52.3%.
+PRESETS.update({
+    # 705 bets, 57.45% hit on 2026-03..09; unloaded 2017-08..2026-03 56.54% on
+    # 10,292 bets (z +13.3). A 6-bar (90 min) pivot line, a 0.8-ATR close
+    # through it, faded.
+    "PM 15m Line Break": {
+        **_LINE_COMMON,
+        "pivot_left": 6, "pivot_right": 1,
+        "max_pivot_gap": 100, "max_line_age_bars": 100,
+        "break_buffer_atr": 0.8,
+    },
+})

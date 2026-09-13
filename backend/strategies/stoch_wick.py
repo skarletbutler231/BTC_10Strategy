@@ -249,6 +249,94 @@ class StochWick(Strategy):
                 "ma_type": "EMA", "ma_length": 200,
                 "predict_direction": "Reversion",
             },
+            # -------------------------------------------------------------------------
+            # 15-MINUTE preset, fitted on the latest six months of BTCUSDT
+            # 15m under the protocol the Reversal, Oscillators and Gann 15m
+            # presets use: LOADED 2026-03-13 -> 2026-09-13 (train 03-13 ->
+            # 07-13 for selection, holdout 07-13 -> 09-13 scored once after
+            # the pick was frozen); UNLOADED 2017-08-17 -> 2026-03-13, never
+            # read by any sweep stage and scored once at the end as the real
+            # out-of-sample check (33,116 bets there against 2,457 in the
+            # window). The selection rule was fixed before tuning: train
+            # bets >= 300, both train halves above 52%, every swept
+            # parameter off its grid edge, then highest train hit — read
+            # against the marginals, since at a few hundred bets a config
+            # the SE is 1.5-2.5pp and the single best row is mostly noise.
+            #
+            # SWEEP. One stage of 720 configs raced Reversion/Breakout x
+            # stoch_k_length {5..28} x stoch_d_length {1, 3} x band
+            # {5/95..25/75} x min_wick_ratio {0, 0.1, 0.2} x ADX gate
+            # on/off; a second pass (~20) tried %D 1-5, the recovery filter,
+            # the ATR band, ADX ceilings 20-40, the trend filter and a
+            # weekend gate on the frozen pick. Recovery at 0 throughout, as
+            # every 5m preset has it.
+            #
+            # FOUND. Reversion is the family and Breakout its exact mirror
+            # (pooled train 55.56% vs 44.40%). Inside Reversion the
+            # marginals say: the band is monotone — tighter is better (5/95:
+            # 58.64% train, 25/75: 54.64%) at a steep cost in bets (187 vs
+            # 2,991 a config); k=14 is the best length on both train and
+            # holdout (56.01 / 53.95) and 28 loses the holdout; %D 3 beats 1
+            # on train and loses on the holdout; and the rejection WICK, the
+            # setup's namesake, is monotone against itself on the holdout
+            # (0.0: 54.41%, 0.1: 52.68%, 0.2: 50.80%), with the recovery
+            # filter worse still (0.2 drops the pick to 55.11%, holdout
+            # 52.51%). The stochastic extreme carries the edge; the candle
+            # does not — the same verdict RSI+BB's candle filters got. The
+            # rule's own best row (k14 %D3, band 10/90, wick 0.1) has 616
+            # window bets at 59.09% and 58.01% unloaded, but 2025 at 52.0%.
+            # Opening the band to 15/85 and switching the wick off puts it
+            # on the same plateau with four times the bets, the most even
+            # train halves in the sweep (57.13 / 57.83) and a better worst
+            # year, so that is the preset. The ADX gate is a hit-for-volume
+            # dial (ADX <= 20: 701 bets at 58.06%; off: 2,457 at 56.86%) and
+            # is left off; the ATR band and trend filter are inert or only
+            # remove bets.
+            #
+            # RESULTS — flat $1 per bet, next-candle direction
+            #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+            #   PM 15m Balanced     2,457  56.86%  57.49%   55.83%    57.39% (33,116, z +26.9)  54.21% (2025)
+            #
+            # Per year on the full record, none of it fitted except the last six months:
+            #   2017  52.28% (1,754)     2018  60.67% (2,911)     2019  60.16% (2,525)     2020  61.72% (3,054)
+            #   2021  57.69% (4,448)     2022  56.33% (3,437)     2023  58.02% (3,204)     2024  56.74% (4,871)
+            #   2025  54.21% (6,069)     2026  57.55% (3,300)
+            #
+            # Train halves 57.12% / 57.82%. About 13.3 bets a day. The 18
+            # months right before the window (2024-09 -> 2026-03) score
+            # 55.10% on 8,588 bets; whole record 35,573 bets, 57.35%, z
+            # +27.7. Read the hit rates against 49.9%: 0.13% of 15m candles
+            # close exactly at their open. Checks after the pick was frozen:
+            # the prefix (no look-ahead) test passes with 0 mismatches at
+            # three cut points; bets run 47% long in the window and both
+            # sides win (window long 57.01% / short 56.73%; unloaded 57.85%
+            # / 57.10%); the mirror on the same settings scores 43.14% in
+            # the window and 42.51% unloaded.
+            #
+            # WHERE IT FAILS. The worst month in the window is 2026-08 at
+            # 53.8% on 444 bets; the worst full year 2025 at 54.21%. The
+            # edge DECAYS: 2018-2020 run 60-62%, 2025 is the worst full year
+            # of every config tried (52-54%) and 2026-08 ran at 53.8% on 444
+            # bets. The recent numbers are the live estimate. The 0.50-odds
+            # EV the dashboard prints assumes a fill at even; a real 15m
+            # book prices away from it. Hit rate is the finding.
+            #
+            # NOT SHIPPED. PM 5m Volume carried over unchanged (band 5/95,
+            # wick 0.1) prints 60.91% on 440 window bets and 59.63% on 5,534
+            # unloaded — the highest hit rate here, on a sixth of the bets;
+            # a Selective tier if one is wanted. With Trend EMA200: 798 bets
+            # at 58.90% (train 60.81, holdout 55.78). ADX <= 20: 701 at
+            # 58.06%. %D 5: 1,625 at 57.66% with the strongest train (58.97)
+            # but a holdout under the pick's.
+            "PM 15m Balanced": {
+                "stoch_k_length": 14, "stoch_d_length": 3, "overbought": 85,
+                "oversold": 15, "min_wick_ratio": 0.0, "min_close_recovery": 0.0,
+                "use_adx_filter": False, "adx_length": 14, "adx_max": 30,
+                "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+                "use_trend_filter": False, "trend_logic": "With Trend",
+                "ma_type": "EMA", "ma_length": 200,
+                "predict_direction": "Reversion",
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

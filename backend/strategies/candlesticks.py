@@ -686,4 +686,94 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
         "predict_direction": "Fade",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (14,226 bets
+    # there against 1,119 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,440 configs raced five pattern sets (marubozu;
+    # engulfing; hammer; the seven reversal patterns together; marubozu +
+    # three soldiers) x Fade/Pattern x prior-move gate {off, Textbook,
+    # Extension, Reversal} x prior_move_bars {3, 6, 12} x prior_move_atr
+    # {0.5..2.0} x min_range_atr {0.5..1.5}; extension passes (~20) pushed
+    # the range and prior-move floors down to 0.25 because both marginals
+    # ran to a grid edge, and tried marubozu_body_min, the ATR band and the
+    # trend filter on the frozen family.
+    #
+    # FOUND. Every 5m finding transfers. FADE, always: the pattern's own
+    # direction pools 47.41% train / 48.16% holdout against 52.52 / 51.78
+    # faded. Only the decisive bars earn: marubozu pools 55.56% / 54.29%,
+    # marubozu + soldiers 56.03 / 54.27, engulfing 53.31 / 51.06, the hammer
+    # 47.64 / 50.17 and the seven reversal patterns together 50.29 / 49.91 —
+    # the textbook reversal vocabulary is noise on 15m as it was on 5m. The
+    # EXTENSION gate is the context that matters: a marubozu that extends a
+    # move already under way fades at 57.5% / 58.7% pooled against 55.2 /
+    # 53.2 with no gate and 53.6 / 51.5 under the 'Reversal' reading (for a
+    # continuation bar, Textbook and Extension are the same reading and
+    # their rows are identical). Inside that family the surface is flat —
+    # every cell of the extended range x prior-move grid scores 58.2-59.7%
+    # on the unloaded years — so the preset takes the interior point with
+    # the most even train halves: marubozu or three soldiers of at least 0.5
+    # ATR range, extending a 6-bar move of at least 0.5 ATR, faded. The
+    # trend filter and the ATR band are inert.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     1,119  57.73%  57.67%   57.84%    58.65% (14,226, z +20.6)  56.79% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  55.56% (720)       2018  60.92% (1,277)     2019  62.00% (1,213)     2020  63.22% (1,430)
+    #   2021  57.10% (1,499)     2022  56.79% (1,208)     2023  59.12% (1,695)     2024  57.08% (2,169)
+    #   2025  56.94% (2,601)     2026  58.19% (1,533)
+    #
+    # Train halves 57.93% / 57.44%. About 6.1 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 57.36% on 3,745
+    # bets; whole record 15,345 bets, 58.58%, z +21.3. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 49% long in the
+    # window and both sides win (window long 56.42% / short 59.01%; unloaded
+    # 59.40% / 58.02%); the mirror on the same settings scores 42.27% in the
+    # window and 41.22% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-09 at 55.2% on
+    # 87 bets; the worst full year 2022 at 56.79%. Train halves 57.9 /
+    # 57.4%; 2022 is the worst full year at 56.8% and 2021, 2024 and 2025
+    # run 57%, against 61-63% in 2018-2020: the edge is real in every year
+    # and decaying. The 0.50-odds EV the dashboard prints assumes a fill at
+    # even; a real 15m book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. prior_move_atr 1.0 at the same range: 745 window bets at
+    # 59.60% (holdout 61.42%), 59.71% on 8,690 unloaded bets — the Selective
+    # tier. min_range 0.25 with prior 0.25: 1,415 at 57.24%, 58.18% unloaded
+    # — the Volume tier. The rule's own top row (range 1.0, prior 1.0): 476
+    # at 57.35%, 59.50% unloaded. PM 5m Volume and Balanced carried over as-
+    # is score 59.14% / 59.33% in the window and 59.60% / 59.62% unloaded —
+    # both 5m presets transfer to 15m unchanged.
+    # 1,119 bets, 57.73% hit on 2026-03..09; unloaded 2017-08..2026-03 58.65%
+    # on 14,226 bets (z +20.6); every full year >= 56.6%. A marubozu or three
+    # soldiers of >= 0.5 ATR that EXTENDS a 6-bar move of >= 0.5 ATR, faded.
+    "PM 15m Balanced": {
+        "pat_engulfing": False, "pat_hammer": False, "pat_harami": False,
+        "pat_piercing": False, "pat_star": False, "pat_doji": False,
+        "pat_tweezer": False, "pat_marubozu": True, "pat_soldiers": True,
+        "body_strong_min": 0.5, "body_small_max": 0.3, "doji_body_max": 0.1,
+        "pin_wick_min": 0.5, "pin_opp_wick_max": 0.2,
+        "marubozu_body_min": 0.75, "tweezer_tol_atr": 0.05,
+        "engulf_mode": "Body", "min_range_atr": 0.5,
+        "require_prior_move": True, "prior_move_logic": "Extension",
+        "prior_move_bars": 6, "prior_move_atr": 0.5,
+        "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "use_trend_filter": False, "trend_logic": "With Trend",
+        "ma_type": "EMA", "ma_length": 200, "source": "close",
+        "predict_direction": "Fade",
+    },
 }

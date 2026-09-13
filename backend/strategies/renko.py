@@ -574,4 +574,87 @@ PRESETS: dict = {
         "use_trend_filter": False, "trend_logic": "With Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (32,046 bets
+    # there against 2,238 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 3,072 configs raced Fade/Follow x trigger {Brick
+    # Reversal, Brick Run, Any New Brick} x brick {0.25..2.0 ATR, 0.15..1.0
+    # %} x reversal_bricks {1..4} x min_run_bricks {2..8} x max_new_bricks
+    # {0, 2} x trend filter {off, With EMA200}; a second pass (~10) tried
+    # the brick multiple, the ATR length and the ATR band on the frozen
+    # pick.
+    #
+    # FOUND. Fade the brick, as on 5m: pooled train 54.33% against 44.98%
+    # for following it. Then a change of trigger. On 5m the pick fired on
+    # the brick REVERSAL; on 15m the volume and the out-of-sample edge are
+    # in ANY NEW BRICK faded — every fresh brick is a bet against the
+    # brick's direction — and the brick has to be large: at 1.0 ATR the fade
+    # scores 57.42% on 2,238 window bets and 57.21% on 32,046 unloaded bets,
+    # at 0.25 ATR it is 53.4-53.9% on four times the volume, and at 2.0 ATR
+    # 60.7% on a third of the bets. ATR-sized bricks are preferred to
+    # percent bricks because the bet rate stays constant across price
+    # regimes (a 0.3% brick fires 3,015 times in the unloaded 2017 against
+    # 1,189 for a 1-ATR brick, and its worst year is 0.6pp lower).
+    # reversal_bricks 2 beats 3 on both windows at this trigger;
+    # min_run_bricks is unused; max_new_bricks and the ATR band are inert;
+    # With Trend EMA200 lifts the hit to 58.6% unloaded at a third of the
+    # bets. The rule's own top row (Brick Run on 0.15% bricks) prints 63.08%
+    # in the window and 56.35% unloaded with 2025 at 52.9% — a fit.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     2,238  57.42%  57.62%   57.05%    57.21% (32,046, z +25.8)  55.88% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  53.07% (1,189)     2018  57.58% (3,133)     2019  58.43% (3,156)     2020  59.94% (3,475)
+    #   2021  57.06% (3,756)     2022  55.88% (3,638)     2023  57.97% (3,873)     2024  56.72% (4,321)
+    #   2025  55.92% (4,666)     2026  57.75% (3,077)
+    #
+    # Train halves 58.53% / 56.79%. About 12.1 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 56.18% on 6,881
+    # bets; whole record 34,284 bets, 57.23%, z +26.8. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 50% long in the
+    # window and both sides win (window long 56.33% / short 58.51%; unloaded
+    # 57.57% / 56.88%); the mirror on the same settings scores 42.54% in the
+    # window and 42.74% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-08 at 55.2% on
+    # 382 bets; the worst full year 2022 at 55.88%. Train halves 58.5 /
+    # 56.8%. 2022 is the worst full year at 55.9% and 2025 at 55.9%, against
+    # 58-60% in 2019-2020 and 2023. The 0.50-odds EV the dashboard prints
+    # assumes a fill at even; a real 15m book prices away from it. Hit rate
+    # is the finding.
+    #
+    # NOT SHIPPED. 2.0-ATR bricks: 771 window bets at 60.70% (holdout
+    # 59.15%), 57.22% unloaded — the Selective tier. With Trend EMA200 at
+    # 1.0 ATR: 667 at 59.37%, 58.61% unloaded. 0.5-ATR bricks with a 3-brick
+    # reversal: 4,091 at 55.90%, 57.37% on 58,700 unloaded bets (z +35.7) —
+    # the Volume tier. The rule's row (Brick Run, 0.15%, 3 / 5): 455 at
+    # 63.08%, 56.35% unloaded. PM 5m Volume carried over as-is: 155 window
+    # bets, 56.54% unloaded with 2025 at 52.6%.
+    # 2,238 bets, 57.42% hit on 2026-03..09; unloaded 2017-08..2026-03 57.21%
+    # on 32,046 bets (z +25.8); every full year >= 55.9%. Every new 1-ATR
+    # brick faded; the brick reversal itself needs two bricks.
+    "PM 15m Balanced": {
+        "brick_mode": MODE_ATR, "atr_length": 14, "brick_atr_mult": 1.0,
+        "brick_pct": 0.3, "brick_fixed": 100.0,
+        "reversal_bricks": 2,
+        "trigger": TRIG_ANY, "min_run_bricks": 3, "max_new_bricks": 0,
+        "vol_atr_length": 20, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "predict_direction": "Fade Brick",
+        "use_trend_filter": False, "trend_logic": "With Trend",
+        "ma_type": "EMA", "ma_length": 200, "source": "close",
+    },
 }

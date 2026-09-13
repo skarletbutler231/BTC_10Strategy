@@ -392,4 +392,82 @@ PRESETS: dict = {
         "rsi_length": 14, "rsi_overbought": 70, "rsi_oversold": 30,
         "vol_atr_length": 20, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (27,527 bets
+    # there against 1,770 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,440 configs raced atr_length {14, 20} x jump1
+    # {1.0..2.5} x jump2 {3, 5, no cap} x close_extreme {0, 0.5} x wick {0,
+    # 0.2, 0.35} x rsi_length {7, 14} x RSI band {25/75..40/60}; a second
+    # pass (~15) tried the jump and RSI neighbourhood, the ATR band and the
+    # day-of-week gates on the frozen pick. Filter-off values (wick 0, no
+    # cap) were exempt from the grid-edge rule.
+    #
+    # FOUND. The candle filters lose, as on 5m: the rejection wick is
+    # monotone against itself (0: 56.43% train / 56.05% holdout, 0.2: 55.37
+    # / 52.05, 0.35: 50.42 / 46.32) and the close-extreme gate changes
+    # nothing, so both are off. The jump upper bound is a no-op above 5 ATR
+    # (the 5m Volume's 3.0 cap loses 1.5pp on train) and the preset leaves
+    # it open. The rule's in-window favourite — a jump of 2.0 ATR — is a
+    # fit: 686 window bets at 59.33% with a 60.43% holdout, but 53.94% on
+    # the unloaded years with 2021 at 48.9%. The 5m presets' own jump
+    # threshold of 1.3 ATR with a faster RSI (7 bars, 35/65) is the config
+    # that holds: 1,770 bets at 57.06% in the window and 56.21% on 27,527
+    # unloaded bets, every full year 55.4-57.6%. jump1 1.45 is a hit-for-
+    # volume dial (1,400 at 58.07%); rsi_length 7 beats 5 and 10 on both
+    # windows; the ATR band is inert. The 5m day-of-week finding transfers
+    # in the SAME direction on the unloaded years: weekend-only scores
+    # 58.41% on 7,728 unloaded bets and Saturday-only 59.68% on 3,368,
+    # against 56.21% all days — but in the six-month window neither beats
+    # all-days (56.69% and 56.48% vs 57.06%), so the gate was not fitted
+    # here and the preset trades every day.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     1,770  57.06%  57.54%   56.11%    56.21% (27,527, z +20.6)  55.43% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  52.44% (942)       2018  56.58% (3,001)     2019  56.59% (2,997)     2020  56.65% (2,976)
+    #   2021  55.61% (3,246)     2022  55.43% (3,446)     2023  57.58% (3,482)     2024  56.28% (3,477)
+    #   2025  55.61% (3,291)     2026  57.52% (2,439)
+    #
+    # Train halves 60.11% / 55.17%. About 9.6 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 55.94% on 4,984
+    # bets; whole record 29,297 bets, 56.27%, z +21.4. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 51% long in the
+    # window and both sides win (window long 56.86% / short 57.27%; unloaded
+    # 56.83% / 55.54%).
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-06 at 53.9% on
+    # 284 bets; the worst full year 2022 at 55.43%. Train halves are 60.1 /
+    # 55.2%, and 2026-06 ran at 53.9% on 284 bets. The unloaded years are a
+    # flat 55.4-57.6% — a real but modest edge with no strong year to lean
+    # on. The 0.50-odds EV the dashboard prints assumes a fill at even; a
+    # real 15m book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. Weekend-only: 538 window bets at 56.69%, 58.41% on 7,728
+    # unloaded (z +14.8) — the 5m day finding, alive out of sample and not
+    # in the window. jump1 2.0 (the rule's row): 686 at 59.33% in the
+    # window, 53.94% unloaded. jump1 1.45: 1,400 at 58.07%, not scored
+    # unloaded. PM 5m All Days as-is: 627 at 57.26%, 55.14% unloaded; PM 5m
+    # Volume as-is: 499 at 56.31%, 55.90% unloaded.
+    # 1,770 bets, 57.06% hit on 2026-03..09; unloaded 2017-08..2026-03 56.21%
+    # on 27,527 bets (z +20.6); every full year 55.4-57.6%. All seven days.
+    "PM 15m Balanced": {
+        "atr_length": 14, "jump1_atr_mult": 1.3, "jump2_atr_mult": 20.0,
+        "close_extreme_min": 0.0, "wick_min_ratio": 0.0,
+        "rsi_length": 7, "rsi_overbought": 65, "rsi_oversold": 35,
+        "vol_atr_length": 20, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+    },
 }

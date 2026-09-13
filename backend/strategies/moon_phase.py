@@ -365,4 +365,15 @@ class MoonPhase(Strategy):
 # So still no preset. An optimised one would be a trap: it carries a 51.76%
 # train number that a fake cycle beats and that decays to the no-moon baseline
 # out of sample.
+#
+# 15-MINUTE CHECK (2026-09-13). The same question was put to the six-month 15m
+# window every other strategy's 15m preset was fitted on (train 2026-03-13 ->
+# 07-13, holdout -> 09-13, 2017-08 -> 2026-03 scored once, unloaded). 132
+# configs: every single phase bucket, the two halves and all eight, x both
+# directions x three trend modes x Every Bar / Once Per Day. Best on train:
+# 55.29% on 709 bets (First Quarter only, Waxing Short, Against Trend). Its
+# holdout is 49.59% and its 8.5 unloaded years score 49.99% on 19,333 bets —
+# z of exactly zero. Every 15m bar taken long is 49.85% and short 50.06%. The
+# moon does not predict 15m bars any more than it predicts 5m ones, and so
+# there is no PM 15m preset here either, on purpose.
 PRESETS: dict = {}

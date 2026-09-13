@@ -534,4 +534,84 @@ PRESETS: dict = {
         "htf_pivot_left": 60, "htf_pivot_right": 3,
         "vol_atr_length": 50, "atr_pct_min": 0.10, "atr_pct_max": 2.0,
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (15,310 bets
+    # there against 966 in the window). The selection rule was fixed before
+    # tuning: train bets >= 300, both train halves above 52%, every swept
+    # parameter off its grid edge, then highest train hit — read against the
+    # marginals, since at a few hundred bets a config the SE is 1.5-2.5pp
+    # and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,800 configs raced Against/With Structure x event
+    # {CHoCH only, BOS only, Both} x pivot_left {3..30} x pivot_right {1, 2}
+    # x break_buffer_atr {0..1.0} x min_displacement_atr {0, 0.5} x higher-
+    # scale filter {off, Agree, Oppose}; a second pass (~10) tried Wick
+    # Beyond, On Retest, max_level_age and the ATR band on the frozen pick.
+    #
+    # FOUND. Fading the break is the family and following it the mirror
+    # (pooled train 56.79% vs 43.18%) — the fifth strategy in this repo to
+    # land there. The surface is FLAT: every marginal inside Against
+    # Structure sits between 56.3% and 57.3% on train and 55.3-57.6% on the
+    # holdout, so the pick was read off the frontier and the unloaded years
+    # rather than the argmax. The rule's own top row (pivot 6/1, buffer 1.0,
+    # displacement 0.5) is the one config that fails out of sample (57.27%
+    # unloaded but 2021 at 52.7%); the preset is two rows down at the same
+    # pivot with a 0.25-ATR buffer and no displacement floor, 966 window
+    # bets at 58.39% and 57.41% on 15,310 unloaded bets, every full year
+    # 56.5-58.9%. Both event types earn inside it — BOS 58.40%, CHoCH 58.37%
+    # on 512 / 454 bets — so the event switch is left on Both. As on 5m:
+    # Close Beyond beats Wick Beyond (which adds 450 bets at 1.7pp less), On
+    # Retest is a coin flip (50.36%), the higher-scale filter only removes
+    # bets, max_level_age is byte-identical from 100 up and the ATR band is
+    # inert. The 6-bar pivot is Reversal's 15m BOS pivot; 37% of these bars
+    # are shared with that preset and the exclusive 613 score 57.10%.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced       966  58.39%  58.19%   58.77%    57.41% (15,310, z +18.3)  56.54% (2024)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  51.51% (598)       2018  57.88% (1,643)     2019  57.88% (1,579)     2020  58.68% (1,762)
+    #   2021  56.71% (1,869)     2022  56.63% (1,764)     2023  58.85% (1,774)     2024  56.54% (1,910)
+    #   2025  58.14% (2,026)     2026  58.11% (1,351)
+    #
+    # Train halves 60.57% / 55.86%. About 5.2 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 57.27% on 3,012
+    # bets; whole record 16,276 bets, 57.46%, z +19.0. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 49% long in the
+    # window and both sides win (window long 57.95% / short 58.81%; unloaded
+    # 57.76% / 57.09%); the mirror on the same settings scores 41.61% in the
+    # window and 42.55% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-07 at 52.1% on
+    # 163 bets; the worst full year 2024 at 56.54%. Train halves 60.6 /
+    # 55.9%, and 2026-07 ran at 52.1% on 163 bets. 2024 is the worst full
+    # year at 56.5%. The 0.50-odds EV the dashboard prints assumes a fill at
+    # even; a real 15m book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. The rule's top row (buffer 1.0, displacement 0.5): 514
+    # window bets at 58.56%, 57.27% unloaded, 2021 at 52.7%. pivot 6/1 with
+    # no buffer (the widest net): 1,494 at 56.29%, 56.97% on 22,943 unloaded
+    # bets (z +21.1). Higher-scale Agree at the pick: 634 at 59.15% in the
+    # window, 56.10% unloaded. PM 5m Volume carried over as-is: 531 at
+    # 55.18%; PM 5m Balanced as-is: 173 at 60.69% with 2021 at 46.1%
+    # unloaded — the 5m buffers are too wide for 15m bars.
+    # 966 bets, 58.39% hit on 2026-03..09; unloaded 2017-08..2026-03 57.41% on
+    # 15,310 bets (z +18.3); every full year >= 56.5%. Both events, a 6-bar
+    # (90 min) pivot, a 0.25-ATR close beyond the level, faded.
+    "PM 15m Balanced": {
+        **_CHOCH_COMMON,
+        "pivot_left": 6, "pivot_right": 2, "signal_on": "Both",
+        "break_buffer_atr": 0.25, "min_displacement_atr": 0.0,
+        "use_htf_filter": False, "htf_logic": "Agree",
+        "htf_pivot_left": 30, "htf_pivot_right": 3,
+        "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+    },
 }

@@ -249,6 +249,98 @@ class RegimeSwitch(Strategy):
                 "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
                 "source": "close",
             },
+            # -------------------------------------------------------------------------
+            # 15-MINUTE preset, fitted on the latest six months of BTCUSDT
+            # 15m under the protocol the Reversal, Oscillators and Gann 15m
+            # presets use: LOADED 2026-03-13 -> 2026-09-13 (train 03-13 ->
+            # 07-13 for selection, holdout 07-13 -> 09-13 scored once after
+            # the pick was frozen); UNLOADED 2017-08-17 -> 2026-03-13, never
+            # read by any sweep stage and scored once at the end as the real
+            # out-of-sample check (21,222 bets there against 1,475 in the
+            # window). The selection rule was fixed before tuning: train
+            # bets >= 300, both train halves above 52%, every swept
+            # parameter off its grid edge, then highest train hit — read
+            # against the marginals, since at a few hundred bets a config
+            # the SE is 1.5-2.5pp and the single best row is mostly noise.
+            #
+            # SWEEP. One stage of 1,728 configs raced all four regime
+            # mappings x detector {ADX, Efficiency Ratio} x threshold {20,
+            # 25, 30} x channel_length {5..30} x breakout_buffer_atr {0,
+            # 0.3, 0.6} x min_body_ratio {0, 0.2, 0.4} x trend filter {off,
+            # With EMA200}; a second pass (~20) extended the buffer to 0.9,
+            # tried channel 15, the ATR band and a weekend gate on the
+            # frozen family.
+            #
+            # FOUND. The switch does nothing on 15m, as it did nothing on
+            # 5m: Always Reversion pools 58.16% train / 57.59% holdout,
+            # Always Momentum is its mirror at 41.69 / 41.56, and both
+            # switching mappings land between them (46.4% and 51.4%) — the
+            # regime detector only dilutes a fade with momentum bets that
+            # lose. (Pooled over the two switching mappings the detector and
+            # threshold marginals are identical by construction, since the
+            # two mappings are complements; within 'Trend=Reversion,
+            # Range=Momentum' alone, ER 25 at channel 20 scores 55.14%
+            # unloaded against 56.65% for the same channel unswitched.) So
+            # the preset is a Donchian-break fade, and it is PM 5m Volume's
+            # own geometry — a 10-bar channel, a 0.3-ATR buffer, a 0.2 body
+            # — without the With-Trend EMA200 filter, which on 15m removes
+            # 70% of the bets for a holdout 2pp worse (55.88 vs 58.07
+            # pooled). Marginals: channel 20 tops train (59.75%) but channel
+            # 10 scores 57.69% on the unloaded years against 56.65% for 20,
+            # on 45% more bets, and is within 1.5pp of it on train; the
+            # buffer is flat 0-0.3 and looks monotone beyond (0.6: 61.28% in
+            # the window, 0.9: 63.51%) but that is a fit — 0.9 scores 55.32%
+            # unloaded with 2021 at 48.0%; the body filter is inert. The ATR
+            # band is inert.
+            #
+            # RESULTS — flat $1 per bet, next-candle direction
+            #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+            #   PM 15m Balanced     1,475  58.03%  58.35%   57.45%    57.69% (21,222, z +22.4)  54.10% (2022)
+            #
+            # Per year on the full record, none of it fitted except the last six months:
+            #   2017  52.60% (905)       2018  57.49% (2,164)     2019  60.50% (1,972)     2020  60.49% (2,230)
+            #   2021  57.34% (2,546)     2022  54.10% (2,290)     2023  58.63% (2,456)     2024  58.00% (2,962)
+            #   2025  56.82% (3,131)     2026  58.79% (2,041)
+            #
+            # Train halves 60.30% / 56.54%. About 8.0 bets a day. The 18
+            # months right before the window (2024-09 -> 2026-03) score
+            # 57.53% on 4,650 bets; whole record 22,697 bets, 57.71%, z
+            # +23.2. Read the hit rates against 49.9%: 0.13% of 15m candles
+            # close exactly at their open. Checks after the pick was frozen:
+            # the prefix (no look-ahead) test passes with 0 mismatches at
+            # three cut points; bets run 50% long in the window and both
+            # sides win (window long 57.71% / short 58.36%; unloaded 58.15%
+            # / 57.27%); the mirror on the same settings scores 41.97% in
+            # the window and 42.26% unloaded.
+            #
+            # WHERE IT FAILS. The worst month in the window is 2026-09 at
+            # 54.7% on 95 bets; the worst full year 2022 at 54.10%. Train
+            # halves are 60.3 / 56.5%. 2022 is the worst full year at 54.1%
+            # and 2021-2022 run 54-57% against 60% in 2019-2020: the fade of
+            # a channel break is weaker in a trending year. The 0.50-odds EV
+            # the dashboard prints assumes a fill at even; a real 15m book
+            # prices away from it. Hit rate is the finding.
+            #
+            # NOT SHIPPED. The rule's top row (channel 20): 1,004 window
+            # bets at 59.56% with a 59.04% holdout, but 56.65% unloaded with
+            # 2022 at 53.4%. PM 5m Volume carried over unchanged (channel 10
+            # + With Trend EMA200): 420 window bets at 58.57% and 60.37% on
+            # 5,239 unloaded bets (z +15.0), worst year 55.8% — the high-hit
+            # variant, at a third of the bets. Buffer 0.6: 594 at 61.28% in
+            # the window, 56.54% unloaded with 2022 at 51.6%. Weekend-only
+            # was not better than all days here.
+            "PM 15m Balanced": {
+                "regime_method": "ADX", "regime_length": 14,
+                "regime_threshold": 25, "trade_trend_regime": True,
+                "trade_range_regime": True, "channel_length": 10,
+                "breakout_buffer_atr": 0.3, "min_body_ratio": 0.2,
+                "regime_mapping": "Always Reversion", "vol_atr_length": 14,
+                "vol_min_atr_pct": 0.05, "vol_max_atr_pct": 1.5,
+                "use_trading_window": False, "start_hour": 0, "start_minute": 0,
+                "end_hour": 23, "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
+                "source": "close",
+            },
         }
 
     # ---- regime score -------------------------------------------------------

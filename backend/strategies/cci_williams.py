@@ -355,4 +355,83 @@ PRESETS: dict = {
         "atr_pct_min": 0.05, "atr_pct_max": 1.5,
         "predict_direction": "Reversion",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (14,674 bets
+    # there against 1,076 in the window). The selection rule was fixed
+    # before tuning: train bets >= 300, both train halves above 52%, every
+    # swept parameter off its grid edge, then highest train hit — read
+    # against the marginals, since at a few hundred bets a config the SE is
+    # 1.5-2.5pp and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 1,152 configs raced Reversion/Continuation x
+    # cci_length {10..30} x cci_threshold {100..250} x wr_length {7..21} x
+    # Williams band {-5/-95 .. -20/-80} x wick confirm {off, 0.1, 0.25};
+    # extension passes (~25) pushed the band to -3 and the CCI threshold
+    # down to 50 because both marginals ran to a grid edge, and tried the
+    # lengths, the recovery filter, the ATR band and a weekend gate on the
+    # frozen pick.
+    #
+    # FOUND. Reversion is the family and Continuation its mirror (pooled
+    # train 57.10% vs 42.79%), and this is the most robust of the video's
+    # ten on 15m: every Reversion config in the neighbourhood scores 59-60%
+    # on the unloaded years. The Williams band is monotone in both windows —
+    # the closer to the rail the better (-20: 56.31% train / 54.42% holdout,
+    # -10: 57.70 / 56.79, -5: 60.50 / 61.12) — and -5, the 5m Balanced's own
+    # value, is where the preset sits; -3 is no better unloaded (59.68 vs
+    # 59.56%) on half the bets. The CCI threshold is the volume dial: 50 to
+    # 150 all score 59.1-59.8% unloaded while the bets fall from 1,309 to
+    # 622, so the preset takes Lambert's classic 100 — the knee, interior of
+    # the extended grid. cci_length 20 tops train and holdout together;
+    # wr_length is flat 7-21. The wick confirmation is monotone against
+    # itself on the holdout (0: 57.43%, 0.1: 55.17, 0.25: 51.82) and is off,
+    # which makes the recovery filter a no-op. The ATR band is inert.
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced     1,076  60.32%  59.97%   60.88%    59.56% (14,674, z +23.2)  56.47% (2025)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  52.39% (1,130)     2018  61.14% (1,230)     2019  62.88% (1,091)     2020  64.33% (1,424)
+    #   2021  60.78% (1,754)     2022  60.33% (1,147)     2023  60.98% (1,325)     2024  59.38% (2,228)
+    #   2025  56.47% (2,920)     2026  60.29% (1,501)
+    #
+    # Train halves 61.02% / 59.04%. About 5.8 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 56.87% on 4,183
+    # bets; whole record 15,750 bets, 59.61%, z +24.1. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 51% long in the
+    # window and both sides win (window long 58.73% / short 61.98%; unloaded
+    # 59.82% / 59.38%); the mirror on the same settings scores 39.68% in the
+    # window and 40.30% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-04 at 58.4% on
+    # 161 bets; the worst full year 2025 at 56.47%. The edge decays:
+    # 2018-2023 run 60-64% and 2024-2025 59.4 / 56.5%, so the recent years
+    # are the estimate. Train halves 61.0 / 59.0%; no window month under
+    # 58%. The 0.50-odds EV the dashboard prints assumes a fill at even; a
+    # real 15m book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. The rule's own top row (CCI 200, band -10): 491 window
+    # bets at 61.30%, 59.47% unloaded. CCI 150 at -5: 622 at 61.09%, 59.75%
+    # unloaded — a Selective tier. CCI 100 at -10: 2,110 at 57.35%, 58.92%
+    # on 30,150 unloaded bets (z +31.0) — a Volume tier. cci_length 30: 878
+    # at 61.05%. Weekend-only: 242 at 61.98%. PM 5m Balanced as-is: 300 at
+    # 63.00% in the window, 60.23% unloaded; PM 5m Selective as-is: 509 at
+    # 61.30%, 59.60% unloaded — both 5m presets transfer to 15m as they are.
+    # 1,076 bets, 60.32% hit on 2026-03..09; unloaded 2017-08..2026-03 59.56%
+    # on 14,674 bets (z +23.2); every full year >= 56.5%, 2018-2023 at 60-64%.
+    # The classic CCI 100 with Williams %R at the -5 / -95 rails, no candle.
+    "PM 15m Balanced": {
+        "cci_length": 20, "cci_threshold": 100, "wr_length": 12,
+        "wr_overbought": -5, "wr_oversold": -95,
+        "use_wick_confirm": False, "wick_min": 0.0, "close_recover_min": 0.0,
+        "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "predict_direction": "Reversion",
+    },
 }

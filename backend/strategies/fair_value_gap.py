@@ -259,4 +259,83 @@ PRESETS: dict = {
         "use_trend_filter": False, "trend_logic": "With Trend",
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
+    # -------------------------------------------------------------------------
+    # 15-MINUTE preset, fitted on the latest six months of BTCUSDT 15m under
+    # the protocol the Reversal, Oscillators and Gann 15m presets use:
+    # LOADED 2026-03-13 -> 2026-09-13 (train 03-13 -> 07-13 for selection,
+    # holdout 07-13 -> 09-13 scored once after the pick was frozen);
+    # UNLOADED 2017-08-17 -> 2026-03-13, never read by any sweep stage and
+    # scored once at the end as the real out-of-sample check (4,939 bets
+    # there against 482 in the window). The selection rule was fixed before
+    # tuning: train bets >= 300, both train halves above 52%, every swept
+    # parameter off its grid edge, then highest train hit — read against the
+    # marginals, since at a few hundred bets a config the SE is 1.5-2.5pp
+    # and the single best row is mostly noise.
+    #
+    # SWEEP. One stage of 960 configs raced Continuation/Reversion x
+    # min_gap_atr_mult {0..1.5} x entry_depth {0..1} x max_gap_age_bars
+    # {24..200} x reaction filter on/off x trend filter {off, With EMA200};
+    # a second pass (~15) tried the impulse body, a non-zero reaction size
+    # and the ATR band on the frozen pick.
+    #
+    # FOUND. Continuation is the family (pooled train 51.71% vs 47.15% for
+    # Reversion — a gap retest that holds goes on with the impulse, as on
+    # 5m). Within it the gap size is the lever: bigger gaps are better on
+    # both windows (0: 51.29% train / 50.59% holdout; 0.75: 53.77 / 55.63;
+    # 1.0: 55.36 / 58.18) at a steep cost in bets; the entry depth peaks at
+    # the gap's midpoint (0.5: 53.10% train — ICT's 'consequent
+    # encroachment' level, and the only depth that beats 52% on train); the
+    # gap's age and the impulse body are inert; the trend filter loses
+    # 1.5pp. The reaction filter is a no-op at reaction_min_atr = 0 (its
+    # rows are byte-identical to 'off') and at 0.25 ATR it destroys the
+    # unloaded years (52.58%, 2026 at 40.6%), which is the 5m verdict on
+    # confirmation filters again. The preset takes the rule's row: a gap of
+    # at least 0.75 ATR, entered at its midpoint within 48 bars (12 h).
+    #
+    # RESULTS — flat $1 per bet, next-candle direction
+    #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+    #   PM 15m Balanced       482  57.05%  56.48%   58.01%    54.16% (4,939, z +5.8)  50.76% (2022)
+    #
+    # Per year on the full record, none of it fitted except the last six months:
+    #   2017  57.63% (177)       2018  53.17% (489)       2019  59.43% (387)       2020  55.30% (472)
+    #   2021  53.12% (544)       2022  50.76% (593)       2023  56.85% (635)       2024  52.84% (687)
+    #   2025  53.94% (799)       2026  55.17% (638)
+    #
+    # Train halves 57.89% / 55.36%. About 2.6 bets a day. The 18 months
+    # right before the window (2024-09 -> 2026-03) score 53.04% on 1,186
+    # bets; whole record 5,421 bets, 54.42%, z +6.5. Read the hit rates
+    # against 49.9%: 0.13% of 15m candles close exactly at their open.
+    # Checks after the pick was frozen: the prefix (no look-ahead) test
+    # passes with 0 mismatches at three cut points; bets run 54% long in the
+    # window and both sides win (window long 60.23% / short 53.36%; unloaded
+    # 53.88% / 54.46%); the mirror on the same settings scores 42.95% in the
+    # window and 45.76% unloaded.
+    #
+    # WHERE IT FAILS. The worst month in the window is 2026-05 at 41.9% on
+    # 74 bets; the worst full year 2022 at 50.76%. THE WEAKEST 15m PRESET IN
+    # THE REPO out of sample: 54.16% on 4,939 unloaded bets (z +5.8), with
+    # 2022 at 50.8% and 2021, 2024 and 2025 at 52-54%, against 57% in a
+    # fitted window that itself had a 41.9% month (2026-05). The window's
+    # 57% is the regime; ~2.7 bets a day. Read it as the 5m note reads its
+    # own preset — a stability-checked pick, not a settled edge. The
+    # 0.50-odds EV the dashboard prints assumes a fill at even; a real 15m
+    # book prices away from it. Hit rate is the finding.
+    #
+    # NOT SHIPPED. gap 0.5 (the volume dial): 952 window bets at 55.67%,
+    # 53.79% unloaded. gap 1.0: 249 at 57.03%, 54.29% unloaded. The 5m
+    # preset carried over as-is (gap 1.25, depth 0.75, age 200): 155 window
+    # bets at 55.48%, 54.02% unloaded with 2021 at 48.4%. Nothing in this
+    # family clears 55% on the unloaded years.
+    # 482 bets, 57.05% hit on 2026-03..09; unloaded 2017-08..2026-03 only
+    # 54.16% on 4,939 bets (z +5.8) — the weakest 15m preset here; see above.
+    "PM 15m Balanced": {
+        "atr_length": 14,
+        "min_gap_atr_mult": 0.75, "min_impulse_body_ratio": 0.0,
+        "require_reaction": False, "reaction_min_atr": 0.0,
+        "entry_depth": 0.5, "max_gap_age_bars": 48,
+        "vol_atr_length": 20, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+        "predict_direction": "Continuation",
+        "use_trend_filter": False, "trend_logic": "With Trend",
+        "ma_type": "EMA", "ma_length": 200, "source": "close",
+    },
 }

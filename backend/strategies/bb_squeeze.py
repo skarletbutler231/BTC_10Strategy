@@ -242,6 +242,97 @@ class BBSqueeze(Strategy):
                 "trend_logic": "With Trend", "ma_type": "EMA",
                 "ma_length": 200, "source": "close",
             },
+            # -------------------------------------------------------------------------
+            # 15-MINUTE preset, fitted on the latest six months of BTCUSDT
+            # 15m under the protocol the Reversal, Oscillators and Gann 15m
+            # presets use: LOADED 2026-03-13 -> 2026-09-13 (train 03-13 ->
+            # 07-13 for selection, holdout 07-13 -> 09-13 scored once after
+            # the pick was frozen); UNLOADED 2017-08-17 -> 2026-03-13, never
+            # read by any sweep stage and scored once at the end as the real
+            # out-of-sample check (21,913 bets there against 1,302 in the
+            # window). The selection rule was fixed before tuning: train
+            # bets >= 300, both train halves above 52%, every swept
+            # parameter off its grid edge, then highest train hit — read
+            # against the marginals, since at a few hundred bets a config
+            # the SE is 1.5-2.5pp and the single best row is mostly noise.
+            #
+            # SWEEP. One stage of 1,536 configs raced Reversion/Breakout x
+            # squeeze gate on/off x bb_length {14..50} x bb_mult {1.5..3.0}
+            # x %B band {0.95..1.1} x min_body_ratio {0, 0.2, 0.4} x trend
+            # filter {off, With EMA200}; a second pass (~15) tried the ATR
+            # band and length, the EMA bias, squeeze percentiles 20-60 and a
+            # weekend gate on the frozen pick.
+            #
+            # FOUND. Reversion is the family and Breakout its mirror (pooled
+            # train 56.69% vs 43.27%), so on 15m as on 5m this trades the
+            # band stretch as a fade and the 'squeeze' is switched off: the
+            # squeeze gate costs 80% of the bets for nothing (pooled 56.15%
+            # vs 56.80% train; on the pick, 238 bets at 60.92% with a 56.47%
+            # holdout). Marginals: bb_length 20 is best on both train and
+            # holdout (57.21 / 55.99) and 50 loses the holdout (51.66);
+            # bb_mult is monotone on train (1.5: 55.90 -> 3.0: 59.66) at a
+            # steep cost in bets; the %B band is monotone too (0.95: 56.39
+            # -> 1.1: 57.38); the body filter is mildly positive (0.0:
+            # 56.30, 0.4: 57.41). The pick is the 5m Balanced's own band
+            # geometry — 20/2.0 with %B 1.05/-0.05 and a 0.2 body — WITHOUT
+            # its With-Trend EMA200 filter, which on the pooled holdout
+            # loses 1.7pp (53.07 vs 54.75) and removes two thirds of the
+            # bets. It is third of the seven rule-eligible rows on train
+            # (59.38% against 59.80% for the top row) with 1.7x the bets and
+            # the better holdout and unloaded years, so it is the one
+            # shipped. The ATR band and length are inert.
+            #
+            # RESULTS — flat $1 per bet, next-candle direction
+            #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+            #   PM 15m Balanced     1,302  58.68%  59.38%   57.31%    57.46% (21,913, z +22.1)  55.68% (2022)
+            #
+            # Per year on the full record, none of it fitted except the last six months:
+            #   2017  49.93% (769)       2018  58.53% (2,438)     2019  58.90% (2,555)     2020  59.42% (2,568)
+            #   2021  56.75% (2,497)     2022  55.68% (2,674)     2023  58.31% (2,598)     2024  56.76% (2,715)
+            #   2025  57.12% (2,584)     2026  59.16% (1,817)
+            #
+            # Train halves 62.94% / 55.86%. About 7.1 bets a day. The 18
+            # months right before the window (2024-09 -> 2026-03) score
+            # 57.14% on 3,892 bets; whole record 23,215 bets, 57.53%, z
+            # +22.9. Read the hit rates against 49.9%: 0.13% of 15m candles
+            # close exactly at their open. Checks after the pick was frozen:
+            # the prefix (no look-ahead) test passes with 0 mismatches at
+            # three cut points; bets run 49% long in the window and both
+            # sides win (window long 57.35% / short 59.94%; unloaded 58.22%
+            # / 56.70%); the mirror on the same settings scores 41.24% in
+            # the window and 42.49% unloaded.
+            #
+            # WHERE IT FAILS. The worst month in the window is 2026-07 at
+            # 55.2% on 239 bets; the worst full year 2022 at 55.68%. Train
+            # halves are 62.9 / 55.9%; the first two window months ran
+            # 61-64% and the rest 55-58%, so read the 58.7% as inflated by
+            # the spring and the 57.5% unloaded figure as the estimate. The
+            # 0.50-odds EV the dashboard prints assumes a fill at even; a
+            # real 15m book prices away from it. Hit rate is the finding.
+            #
+            # NOT SHIPPED. The With-Trend EMA200 variant of the same band
+            # (the 5m Volume's filter): 418 window bets at 58.61% and 59.98%
+            # on 6,576 unloaded bets (z +16.2), every full year 56.7-63.9% —
+            # the highest out-of-sample hit rate in this sweep, on a third
+            # of the bets; the pooled marginal is against it but this cell
+            # is not, and it is the right Selective tier if one is wanted.
+            # bb_length 14 at %B 1.0: 1,744 bets at 56.54%, 57.95% unloaded
+            # (z +27.2). The rule's top row (20/2.5, %B 1.0): 750 at 58.40%,
+            # 57.11% unloaded. bb_mult 1.5: 4,045 at 55.45% for a Volume
+            # tier (56.43% unloaded, z +32.6). Weekend-only: 403 at 60.30%.
+            "PM 15m Balanced": {
+                "bb_length": 20, "bb_mult": 2.0, "pctb_upper": 1.05,
+                "pctb_lower": -0.05, "bw_lookback": 100, "bw_squeeze_pct": 20,
+                "require_squeeze": False, "use_ema_bias": False,
+                "ema_bias_length": 50, "ema_bias_slope_bars": 5,
+                "min_body_ratio": 0.2, "vol_atr_length": 14,
+                "vol_min_atr_pct": 0.05, "vol_max_atr_pct": 1.5,
+                "predict_direction": "Reversion", "use_trading_window": False,
+                "start_hour": 0, "start_minute": 0, "end_hour": 23,
+                "end_minute": 59, "use_trend_filter": False,
+                "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
+                "source": "close",
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

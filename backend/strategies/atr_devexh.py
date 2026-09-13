@@ -227,6 +227,93 @@ class AtrDevExh(Strategy):
                 "predict_direction": "Reversion", "use_trend_filter": True,
                 "trend_mode": "Against Trend", "ma_type": "EMA", "ma_length": 200,
             },
+            # -------------------------------------------------------------------------
+            # 15-MINUTE preset, fitted on the latest six months of BTCUSDT
+            # 15m under the protocol the Reversal, Oscillators and Gann 15m
+            # presets use: LOADED 2026-03-13 -> 2026-09-13 (train 03-13 ->
+            # 07-13 for selection, holdout 07-13 -> 09-13 scored once after
+            # the pick was frozen); UNLOADED 2017-08-17 -> 2026-03-13, never
+            # read by any sweep stage and scored once at the end as the real
+            # out-of-sample check (13,413 bets there against 873 in the
+            # window). The selection rule was fixed before tuning: train
+            # bets >= 300, both train halves above 52%, every swept
+            # parameter off its grid edge, then highest train hit — read
+            # against the marginals, since at a few hundred bets a config
+            # the SE is 1.5-2.5pp and the single best row is mostly noise.
+            #
+            # SWEEP. One stage of 1,296 configs raced Reversion/Breakout x
+            # velocity_mode {Decelerating, Accelerating, Any} x
+            # velocity_lookback {1, 3, 5} x donchian_length {10..100} x
+            # donchian_confirm {1..4} x trend filter {off, Against, With
+            # EMA200}; a second pass (~25) extended the lookback to {1, 2,
+            # 3, 5, 8} and tried the Donchian neighbourhood, the ATR band,
+            # the trend filter and a weekend gate on the frozen family.
+            #
+            # FOUND. Reversion is the family and Breakout its mirror (pooled
+            # train 56.71% vs 43.28%). The velocity gate is the finding, and
+            # it is the 5m one again: fading an extreme reached while
+            # ACCELERATING scores 57.2-57.4% on the unloaded years against
+            # 55.2% with the gate off and 52.9% for Decelerating — the
+            # textbook exhaustion reading is the loser, on 15m as on 5m. The
+            # lookback is a plateau (2, 3, 5 and 8 all score 57.2-57.4%
+            # unloaded; 1 scores 55.4%); the rule landed on 3 only because
+            # it was the sole interior value of the first grid, and its
+            # holdout (52.6% on 287 bets) is the weakest on the plateau with
+            # the most uneven halves (64.1 / 56.5), so the preset takes 5 —
+            # the plateau centre, the most even halves in the sweep (59.7 /
+            # 58.8) and the 5m Balanced's own value. Donchian 20 with two
+            # confirming bars is the train optimum on both marginals (length
+            # 20: 57.29% train; confirm 3-4 lose the holdout). The Against-
+            # Trend filter both 5m tiers carry does nothing here (54.8%
+            # unloaded on the same family against 55.2% without it); the ATR
+            # band is inert.
+            #
+            # RESULTS — flat $1 per bet, next-candle direction
+            #   preset             6m bets  6m hit   train   HOLDOUT   unloaded 8.5y             worst yr
+            #   PM 15m Balanced       873  58.19%  59.27%   56.15%    57.18% (13,413, z +16.6)  54.14% (2022)
+            #
+            # Per year on the full record, none of it fitted except the last six months:
+            #   2017  51.38% (650)       2018  59.13% (1,248)     2019  59.66% (1,294)     2020  59.90% (1,469)
+            #   2021  59.35% (1,663)     2022  54.14% (1,448)     2023  57.11% (1,413)     2024  56.49% (1,818)
+            #   2025  54.88% (2,068)     2026  58.77% (1,215)
+            #
+            # Train halves 59.71% / 58.84%. About 4.7 bets a day. The 18
+            # months right before the window (2024-09 -> 2026-03) score
+            # 56.30% on 3,032 bets; whole record 14,286 bets, 57.24%, z
+            # +17.3. Read the hit rates against 49.9%: 0.13% of 15m candles
+            # close exactly at their open. Checks after the pick was frozen:
+            # the prefix (no look-ahead) test passes with 0 mismatches at
+            # three cut points; bets run 49% long in the window and both
+            # sides win (window long 59.07% / short 57.34%; unloaded 58.75%
+            # / 55.91%); the mirror on the same settings scores 41.81% in
+            # the window and 42.75% unloaded.
+            #
+            # WHERE IT FAILS. The worst month in the window is 2026-08 at
+            # 53.1% on 143 bets; the worst full year 2022 at 54.14%. This is
+            # the thinnest of the video's ten on 15m, ~5 bets a day, and its
+            # window months range 53-62%. The edge decays: 2018-2021 run
+            # 59-60%, 2022-2025 54-57%. The 0.50-odds EV the dashboard
+            # prints assumes a fill at even; a real 15m book prices away
+            # from it. Hit rate is the finding.
+            #
+            # NOT SHIPPED. donchian_confirm 1 for volume: 2,206 window bets
+            # at 56.12% with train 55.98 / holdout 56.39 and 56.29% unloaded
+            # (z +23.3) — a Volume tier in all but name, and the better
+            # choice if bets matter more than the last point of hit rate.
+            # velocity_lookback 3 (the rule's row): 817 bets at 57.41%,
+            # 57.31% unloaded, holdout 52.61%. Weekend-only: 218 bets at
+            # 61.47% (train 65.49, holdout 53.95). With Trend EMA200: 181 at
+            # 61.33%. PM 5m Volume carried over as-is (Donchian 100, confirm
+            # 3, Against Trend) is 117 window bets at 47.01% — the 5m
+            # geometry does not transfer.
+            "PM 15m Balanced": {
+                "velocity_lookback": 5, "velocity_mode": "Accelerating",
+                "donchian_length": 20, "donchian_confirm": 2,
+                "vol_atr_length": 14, "atr_pct_min": 0.05, "atr_pct_max": 1.5,
+                "predict_direction": "Reversion", "use_trend_filter": False,
+                "trend_mode": "Against Trend", "ma_type": "EMA",
+                "ma_length": 200,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:
