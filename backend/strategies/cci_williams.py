@@ -356,3 +356,48 @@ PRESETS: dict = {
         "predict_direction": "Reversion",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     8,611  60.78% +20.0 |  6,120  61.49% | 58.92% (58.4/59.4)   804  59.33% | 51.2% (2017)
+    #   Balanced   4,612  59.06% +12.3 |  3,496  58.92% | 59.77% (56.3/63.5)   415  59.04% | 52.1% (2017)
+    #   Selective  2,641  61.08% +11.4 |  1,943  60.73% | 59.56% (60.4/58.7)   248  66.53% | 45.1% (2017)
+    #
+    # Two oscillators agreeing on exhaustion, faded. Volume (10-bar CCI at 150,
+    # 7-bar %R at -5/-95, no wick confirm, ATR% 0.15-2.0) is the pick: 58.92%
+    # train -> 59.33% holdout on 804 bets, 61.49% on the unswept years.
+    # Selective's 66.53% holdout is on 248 bets (+-3.0pp) against 59.56% train -
+    # a lucky nine months rather than a better preset; its 2017 reads 45.1%.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.15, "cci_length": 10,
+        "cci_threshold": 150, "close_recover_min": 0.0,
+        "predict_direction": "Reversion", "use_wick_confirm": False,
+        "vol_atr_length": 50, "wick_min": 0.0, "wr_length": 7, "wr_overbought": -5,
+        "wr_oversold": -95,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "cci_length": 10,
+        "cci_threshold": 190, "close_recover_min": 0.0,
+        "predict_direction": "Reversion", "use_wick_confirm": True,
+        "vol_atr_length": 50, "wick_min": 0.05, "wr_length": 10,
+        "wr_overbought": -10, "wr_oversold": -90,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.15, "cci_length": 16,
+        "cci_threshold": 190, "close_recover_min": 0.0,
+        "predict_direction": "Reversion", "use_wick_confirm": True,
+        "vol_atr_length": 50, "wick_min": 0.05, "wr_length": 21,
+        "wr_overbought": -5, "wr_oversold": -95,
+    },
+})

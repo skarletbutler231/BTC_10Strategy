@@ -706,3 +706,54 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     9,163  57.78% +14.9 |  6,996  58.20% | 57.45% (57.5/57.4)   811  54.62% | 50.1% (2017)
+    #   Balanced   3,622  56.52%  +7.8 |  2,760  56.59% | 59.23% (60.6/57.8)   320  51.25% | 47.5% (2017)
+    #   Selective  2,603  56.82%  +7.0 |  1,965  56.69% | 60.14% (61.0/59.2)   219  51.60% | 51.6% (2017)
+    #
+    # NOT RECOMMENDED. Balanced and Selective (AB=CD only, close inside the PRZ)
+    # post 59-60% on train and 51.3% / 51.6% on the holdout - pure selection.
+    # Volume (all seven patterns, against-trend SMA50) keeps 54.62% out of sample
+    # on 811 bets and 58.20% on the unswept years; it is the only tier with any
+    # claim, and a weak one.
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "ma_length": 50, "ma_type": "SMA",
+        "max_bars_to_d": 300, "max_prz_atr": 4.0, "min_xa_atr": 3.0,
+        "pivot_left": 5, "pivot_right": 3, "predict_direction": "Reversal",
+        "prz_entry": "Close Inside", "prz_overshoot_atr": 1.0,
+        "ratio_tolerance": 0.05, "require_cd_zone": False,
+        "trend_logic": "Against Trend", "use_abcd": True, "use_bat": True,
+        "use_butterfly": True, "use_crab": True, "use_cypher": True,
+        "use_gartley": True, "use_shark": True, "use_trend_filter": True,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.1, "max_bars_to_d": 300,
+        "max_prz_atr": 2.0, "min_xa_atr": 3.0, "pivot_left": 8, "pivot_right": 3,
+        "predict_direction": "Reversal", "prz_entry": "Close Inside",
+        "prz_overshoot_atr": 1.0, "ratio_tolerance": 0.05, "require_cd_zone": True,
+        "use_abcd": True, "use_bat": False, "use_butterfly": False,
+        "use_crab": False, "use_cypher": False, "use_gartley": False,
+        "use_shark": False, "use_trend_filter": False,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.1, "max_bars_to_d": 300,
+        "max_prz_atr": 2.0, "min_xa_atr": 3.0, "pivot_left": 12, "pivot_right": 3,
+        "predict_direction": "Reversal", "prz_entry": "Close Inside",
+        "prz_overshoot_atr": 1.0, "ratio_tolerance": 0.05, "require_cd_zone": True,
+        "use_abcd": True, "use_bat": False, "use_butterfly": False,
+        "use_crab": False, "use_cypher": False, "use_gartley": False,
+        "use_shark": False, "use_trend_filter": False,
+    },
+})

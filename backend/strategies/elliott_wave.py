@@ -844,3 +844,59 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     8,574  54.95%  +9.2 |  6,506  54.66% | 56.49% (56.5/56.4)   765  54.77% | 52.4% (2017)
+    #   Balanced   4,797  56.87%  +9.5 |  3,691  56.35% | 58.00% (57.1/58.9)   437  59.50% | 51.0% (2018)
+    #   Selective  1,409  58.55%  +6.4 |  1,071  57.52% | 65.14% (64.5/65.7)   120  55.83% | 53.7% (2021)
+    #
+    # Balanced is the pick: Wave 5 faded ('Fade Count') on a Pivot Confirm entry
+    # with a 0.75-ATR opposing bar and an against-trend SMA50 gate, 58.00% train
+    # -> 59.50% holdout on 437 bets. It is the 15m form of the 5m 2yr presets,
+    # which also moved to Wave 5 + fade.
+    # Volume (Wave 3 + 5 followed in the retrace zone) shrinks to 54.77%;
+    # Selective from 65.14% to 55.83% on 120 bets.
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "enforce_impulse_rules": False,
+        "entry_mode": "Retrace Zone", "max_setup_age_bars": 288,
+        "min_pivot_bars": 3, "min_wave1_atr": 6.0, "pivot_atr_mult": 2.5,
+        "predict_direction": "Follow Count", "require_opposing_bar": False,
+        "trade_setup": "Wave 3 + 5", "use_trend_filter": False,
+        "wave2_max_retrace": 1.0, "wave2_min_retrace": 0.236,
+        "wave4_max_retrace": 3.0, "wave4_min_retrace": 0.0,
+    },
+    # *** THE PICK. ***
+    "PM 15m Balanced": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "enforce_impulse_rules": False,
+        "entry_mode": "Pivot Confirm", "ma_length": 50, "ma_type": "SMA",
+        "max_setup_age_bars": 48, "min_pivot_bars": 3, "min_wave1_atr": 0.0,
+        "opposing_bar_min_atr": 0.75, "pivot_atr_mult": 2.5,
+        "predict_direction": "Fade Count", "require_opposing_bar": True,
+        "trade_setup": "Wave 5", "trend_logic": "Against Trend",
+        "use_trend_filter": True, "wave2_max_retrace": 1.0,
+        "wave2_min_retrace": 0.236, "wave4_max_retrace": 3.0,
+        "wave4_min_retrace": 0.0,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "enforce_impulse_rules": False,
+        "entry_mode": "Retrace Zone", "ma_length": 50, "ma_type": "SMA",
+        "max_setup_age_bars": 288, "min_pivot_bars": 3, "min_wave1_atr": 6.0,
+        "opposing_bar_min_atr": 0.75, "pivot_atr_mult": 2.5,
+        "predict_direction": "Follow Count", "require_opposing_bar": True,
+        "trade_setup": "Wave 3 + 5", "trend_logic": "Against Trend",
+        "use_trend_filter": True, "wave2_max_retrace": 3.0,
+        "wave2_min_retrace": 0.0, "wave4_max_retrace": 3.0,
+        "wave4_min_retrace": 0.0,
+    },
+})

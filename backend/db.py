@@ -116,6 +116,40 @@ CREATE TABLE IF NOT EXISTS pm_quote (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS ix_pm_quote_time ON pm_quote(time);
 
+-- The 15-minute BTC UP/DOWN market, from pmqb's standalone 15m capture
+-- (research/capture/capturePM15m.ts -> pm15m_l2.jsonl, 2s book snapshots since
+-- 2026-07-03), folded in by ``backend.data.ingest_pm15m``. Own tables for the
+-- same reason as pm_l2_*_15m: start_ts alone is the key, and a 15m window shares
+-- it with the 5m window that opens at the same moment.
+CREATE TABLE IF NOT EXISTS pm_window_15m (
+    start_ts    INTEGER PRIMARY KEY,   -- window open, unix SECONDS (UTC, 15m grid)
+    market_id   TEXT,
+    slug        TEXT,                  -- 'btc-updown-15m-<start_ts>'
+    end_ts      INTEGER,               -- start_ts + 900
+    start_price REAL,                  -- strike: Gamma eventMetadata.priceToBeat (Chainlink 60s TWAP)
+    end_price   REAL,                  -- settle: Gamma eventMetadata.finalPrice
+    resolved_up INTEGER,               -- 1 up / 0 down / NULL if unresolved
+    resolved_src TEXT                  -- 'gamma' (Polymarket's own resolution, recorded or backfilled)
+) WITHOUT ROWID;
+
+-- One row per (window, second) the capture sampled (~every 2s). YES side only:
+-- the capture also records NO, but Polymarket's book is symmetric
+-- (no_bid = 1 - yes_ask), so it carries no extra information.
+CREATE TABLE IF NOT EXISTS pm_quote_15m (
+    start_ts  INTEGER NOT NULL,   -- -> pm_window_15m
+    time      INTEGER NOT NULL,   -- unix SECONDS (UTC), capture time
+    yes       REAL,               -- YES(UP) mid; NULL when a side is empty
+    yes_bid   REAL,
+    yes_ask   REAL,
+    bid_sz    REAL,               -- shares resting at the best bid / ask
+    ask_sz    REAL,
+    bid_depth REAL,               -- total shares over the captured top-20 bid / ask levels
+    ask_depth REAL,
+    btc       REAL,               -- Binance BTCUSDT mid at the same instant
+    PRIMARY KEY (start_ts, time)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_pm_quote_15m_time ON pm_quote_15m(time);
+
 -- Resumable byte cursor for the append-only stream.jsonl ingester, plus the
 -- still-forming ('unsealed') trailing 1-minute candle held back between runs so
 -- an incomplete minute is never written as if complete.
@@ -130,6 +164,36 @@ CREATE TABLE IF NOT EXISTS cl_partial (
     open    REAL, high REAL, low REAL, close REAL,
     last_ts INTEGER NOT NULL       -- newest tick folded into this minute
 );
+
+-- ============================================================================
+-- Chainlink BTC/USD 30s and 60s TWAPs, one row per captured SECOND, folded out
+-- of the same pmqb stream.jsonl by ``backend.data.ingest_twap``.
+--
+-- WHY ITS OWN TABLE AND NOT ``candles``. These are smoothed AVERAGES, not spot
+-- prints: a 30s TWAP lags spot by ~15s and a differenced 30s-averaged series
+-- carries only ~91% of true volatility. Putting them in ``candles`` beside
+-- BTCUSD_CL would invite exactly the mix-up ingest_stream.py already guards
+-- against (BTCUSD_CL must stay SPOT). Kept per-second rather than per-minute
+-- because the thing these are *for* is the boundary-aligned settlement price,
+-- and a 1m OHLC fold destroys the boundary second.
+--
+-- WHAT SETTLEMENT ACTUALLY READS. Polymarket's 5m BTC market settled on the
+-- Chainlink 30s TWAP until 2026-08-14 00:00 UTC and on the 60s TWAP after it,
+-- so a query spanning that boundary must switch columns at it.
+--
+-- ⚠️ ``time`` is OUR capture second, not Chainlink's observation time: the feed
+-- publishes ~0.95 reports/sec, so a given second may carry the report stamped
+-- one second earlier. ``obs_ts`` is that observation stamp, which makes the
+-- ingestion lag measurable instead of assumed -- but the engine only records it
+-- for the series the market resolves on at the time (30s before the 2026-08-14
+-- cutover, 60s after), which is what ``obs_win`` names.
+CREATE TABLE IF NOT EXISTS cl_twap (
+    time    INTEGER PRIMARY KEY,  -- capture time, unix SECONDS (UTC)
+    twap30  REAL,                 -- Chainlink BTC/USD 30s TWAP as of `time`
+    twap60  REAL,                 -- Chainlink BTC/USD 60s TWAP as of `time`
+    obs_ts  INTEGER,              -- Chainlink observation time, unix SECONDS
+    obs_win INTEGER               -- which window obs_ts belongs to: 30 or 60
+) WITHOUT ROWID;
 
 -- ============================================================================
 -- PMData (api.pmdata.dev) full-history Polymarket L2 order book, folded to a
@@ -194,11 +258,57 @@ CREATE TABLE IF NOT EXISTS pm_l2_market (
     data_date  TEXT                   -- PMData archive day this came from
 ) WITHOUT ROWID;
 
+-- The same three tables for PMData's btc-15m series (15-minute UP/DOWN
+-- markets). Separate tables, not a series column, because every key above is
+-- the window's start_ts alone: a 15m window opening at 12:00 has the same
+-- start_ts as the 5m window opening at 12:00, and would overwrite it — and
+-- every existing reader of pm_l2_* assumes a 5m window. Columns and meaning are
+-- identical; start_ts is on the 15m grid and slugs are 'btc-updown-15m-<ts>'.
+CREATE TABLE IF NOT EXISTS pm_l2_quote_15m (
+    start_ts INTEGER NOT NULL,
+    time     INTEGER NOT NULL,
+    bid      REAL,
+    ask      REAL,
+    mid      REAL,
+    bid_sz   REAL,
+    ask_sz   REAL,
+    bid_d1   REAL,
+    ask_d1   REAL,
+    bid_d5   REAL,
+    ask_d5   REAL,
+    bid_d10  REAL,
+    ask_d10  REAL,
+    n_events INTEGER NOT NULL,
+    PRIMARY KEY (start_ts, time)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_pm_l2_quote_15m_time ON pm_l2_quote_15m(time);
+
+CREATE TABLE IF NOT EXISTS pm_l2_book_15m (
+    start_ts INTEGER NOT NULL,
+    time     INTEGER NOT NULL,
+    ladder   BLOB NOT NULL,
+    UNIQUE (start_ts, time)
+);
+
+CREATE TABLE IF NOT EXISTS pm_l2_market_15m (
+    start_ts   INTEGER PRIMARY KEY,   -- window open, unix SECONDS (15m grid)
+    slug       TEXT NOT NULL,         -- 'btc-updown-15m-<start_ts>'
+    first_ts   INTEGER,
+    last_ts    INTEGER,
+    n_events   INTEGER,
+    n_book     INTEGER,
+    n_change   INTEGER,
+    outcome    TEXT,
+    resolved_up INTEGER,
+    resolved_src TEXT,
+    data_date  TEXT
+) WITHOUT ROWID;
+
 -- Which PMData daily archives have been downloaded and folded in, so a re-run
--- skips them. PMData bills by *day unlocked* (shared across series and data
--- type), which is why the archives are kept rather than re-fetched.
+-- skips them. PMData charges quota per archive download, so the archives are
+-- kept on disk rather than re-fetched.
 CREATE TABLE IF NOT EXISTS pmdata_day (
-    series    TEXT NOT NULL,          -- 'btc-5m'
+    series    TEXT NOT NULL,          -- 'btc-5m' | 'btc-15m'
     data_type TEXT NOT NULL,          -- 'poly_l2'
     data_date TEXT NOT NULL,          -- 'YYYY-MM-DD'
     markets   INTEGER,

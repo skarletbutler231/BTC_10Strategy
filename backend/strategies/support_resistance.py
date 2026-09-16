@@ -435,3 +435,50 @@ PRESETS: dict = {
         "cluster_tol_atr": 1.5, "min_touches": 3, "max_levels": 30,
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    21,683  56.09% +17.9 | 16,569  55.97% | 56.62% (56.7/56.6) 1,935  56.18% | 51.7% (2017)
+    #   Balanced   3,389  54.79%  +5.6 |  2,609  54.31% | 57.49% (61.5/53.5)   279  54.48% | 50.4% (2023)
+    #   Selective  3,055  54.76%  +5.3 |  2,364  54.02% | 57.95% (62.5/53.6)   251  56.18% | 50.5% (2021)
+    #
+    # Volume is the pick and the only tier worth running: fade a level break
+    # (0.1 ATR buffer) on 5/3 pivots clustered at 1 ATR, one touch enough, ATR%
+    # 0.05-1.5; 56.62% train -> 56.18% on 1,935 holdout bets (z +7.5), 55.97% on
+    # the unswept years. Balanced and Selective (3-touch levels, 30-bar pivots)
+    # are 61.5 / 53.5% and 62.5 / 53.6% by train half - the first half made them -
+    # and hold 54.5% / 56.2%.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 0.1,
+        "cluster_tol_atr": 1.0, "max_level_age_bars": 500, "max_levels": 30,
+        "min_touches": 1, "pivot_left": 5, "pivot_right": 3,
+        "predict_direction": "Against Signal", "use_bounce": False,
+        "use_break": True, "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "break_buffer_atr": 0.0,
+        "cluster_tol_atr": 1.0, "max_level_age_bars": 500, "max_levels": 30,
+        "min_touches": 3, "pivot_left": 30, "pivot_right": 3,
+        "predict_direction": "Against Signal", "use_bounce": False,
+        "use_break": True, "use_trend_filter": False,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "break_buffer_atr": 0.0,
+        "cluster_tol_atr": 1.0, "ma_length": 200, "ma_type": "EMA",
+        "max_level_age_bars": 500, "max_levels": 30, "min_touches": 3,
+        "pivot_left": 30, "pivot_right": 3, "predict_direction": "Against Signal",
+        "trend_logic": "Against Trend", "use_bounce": False, "use_break": True,
+        "use_trend_filter": True,
+    },
+})

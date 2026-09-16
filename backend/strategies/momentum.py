@@ -522,3 +522,56 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    16,742  59.66% +25.0 | 12,305  60.09% | 58.32% (57.9/58.7) 1,565  58.72% | 54.6% (2017)
+    #   Balanced   3,537  62.88% +15.3 |  2,437  63.23% | 63.37% (64.2/62.6)   371  59.57% | 54.1% (2017)
+    #   Selective    936  60.79%  +6.6 |    626  61.02% | 62.20% (69.4/54.5)   101  56.44% | 53.6% (2018)
+    #
+    # The bounded-oscillator panel (RSI, Stoch, W%R, CCI) at 14 bars, normalised
+    # at 1 ATR and faded at a 0.7 composite, is the engine. Volume is the
+    # strongest Volume tier of the whole 15m sweep: 58.32% train -> 58.72%
+    # holdout on 1,565 bets, 60.09% on the unswept years, z +25.0 over 16,742.
+    # Balanced is the same panel with all four required to agree, ATR% 0.1-3.0
+    # and a with-trend EMA200 gate: 63.37% -> 59.57%. Selective swaps to the
+    # unbounded panel and is 69.4% / 54.5% by train half - do not run it.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "min_agree": 1,
+        "norm_atr_mult": 1.0, "osc_length": 14,
+        "predict_direction": "Fade Momentum", "score_threshold": 0.7,
+        "trigger_mode": "Extreme", "use_ao": False, "use_cci": True,
+        "use_macd": False, "use_roc": False, "use_rsi": True, "use_stoch": True,
+        "use_trend_filter": False, "use_tsi": False, "use_uo": False,
+        "use_willr": True, "vol_atr_length": 14,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "ma_length": 200, "ma_type": "EMA",
+        "min_agree": 4, "norm_atr_mult": 1.0, "osc_length": 14,
+        "predict_direction": "Fade Momentum", "score_threshold": 0.7,
+        "trend_logic": "With Trend", "trigger_mode": "Extreme", "use_ao": False,
+        "use_cci": True, "use_macd": False, "use_roc": False, "use_rsi": True,
+        "use_stoch": True, "use_trend_filter": True, "use_tsi": False,
+        "use_uo": False, "use_willr": True, "vol_atr_length": 50,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "ma_length": 200, "ma_type": "EMA",
+        "min_agree": 4, "norm_atr_mult": 4.0, "osc_length": 5,
+        "predict_direction": "Fade Momentum", "score_threshold": 0.3,
+        "trend_logic": "With Trend", "trigger_mode": "Extreme", "use_ao": True,
+        "use_cci": False, "use_macd": True, "use_roc": True, "use_rsi": False,
+        "use_stoch": False, "use_trend_filter": True, "use_tsi": True,
+        "use_uo": False, "use_willr": False, "vol_atr_length": 14,
+    },
+})

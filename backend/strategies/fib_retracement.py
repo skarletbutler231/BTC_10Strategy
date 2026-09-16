@@ -457,3 +457,47 @@ PRESETS: dict = {
         "predict_direction": "Trend Resume",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     8,626  56.06% +11.3 |  6,609  56.14% | 56.58% (56.9/56.2)   688  54.36% | 54.1% (2026)
+    #   Balanced   3,608  56.43%  +7.7 |  2,762  55.65% | 60.04% (60.1/60.0)   283  56.89% | 51.9% (2018)
+    #   Selective  1,404  60.97%  +8.2 |  1,070  60.19% | 66.35% (66.3/66.4)   123  58.54% | 55.6% (2018)
+    #
+    # Trend Resume at a deep (0.786-0.85) or halfway (0.5) level on a short
+    # 24-48-bar leg. Balanced (0.786 +-0.05 with a 0.5-ATR opposing bar) is the
+    # tier that replicates: 60.04% train -> 56.89% holdout. Volume shrinks to
+    # 54.36%; Selective from 66.35% to 58.54% on 123 bets.
+    "PM 15m Volume": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.1, "fib_level": 0.85,
+        "fib_tolerance": 0.1, "min_leg_atr": 2.0, "min_leg_bars": 1,
+        "predict_direction": "Trend Resume", "require_opposing_bar": False,
+        "swing_lookback": 24, "use_trend_filter": False, "vol_atr_length": 50,
+    },
+    # *** THE PICK. ***
+    "PM 15m Balanced": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.1, "fib_level": 0.786,
+        "fib_tolerance": 0.05, "min_leg_atr": 2.0, "min_leg_bars": 1,
+        "opposing_bar_min_atr": 0.5, "predict_direction": "Trend Resume",
+        "require_opposing_bar": True, "swing_lookback": 24,
+        "use_trend_filter": False, "vol_atr_length": 50,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.1, "fib_level": 0.5,
+        "fib_tolerance": 0.05, "ma_length": 50, "ma_type": "SMA",
+        "min_leg_atr": 2.0, "min_leg_bars": 1, "opposing_bar_min_atr": 0.75,
+        "predict_direction": "Trend Resume", "require_opposing_bar": True,
+        "swing_lookback": 48, "trend_logic": "Against Trend",
+        "use_trend_filter": True, "vol_atr_length": 50,
+    },
+})

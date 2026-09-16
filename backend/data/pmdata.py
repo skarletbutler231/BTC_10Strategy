@@ -2,19 +2,24 @@
 
 PMData records Polymarket's websocket feeds and republishes them as one ZIP per
 (series, data_type, day); each ZIP holds one Parquet per market. For BTC 5m that
-is 288 markets and ~30M L2 events a day.
+is 288 markets and ~30M L2 events a day; BTC 15m is 96 markets and ~110-200 MB.
 
-Billing is what shapes this module: **PMData counts usage by day unlocked**, and
-an unlocked day is then free forever — across every series and data_type. So the
-archives are downloaded once to disk and never re-fetched; the folded SQLite
-tables are always rebuildable from them without spending quota again.
+Billing is what shapes this module. Per PMData's API reference (checked
+2026-09-13) **quota is charged per archive download** — 144 units for a 5m day,
+48 for 15m, 12 for 1h — and a repeat download is charged again. Only a byte
+range starting after byte 0 is free, which is what resuming a ``.part`` file
+uses. (Before this, PMData billed by *day unlocked*, which this module's first
+backfill ran under.) Either way the rule is the same: archives are downloaded
+once to disk and never re-fetched; the folded SQLite tables are always
+rebuildable from them without spending quota again.
 
 Archive layout (root = PMDATA_ARCHIVE, else a ``pmdata`` dir beside market.db):
 
     <root>/<series>/<data_type>/<series>_<data_type>_<YYYY-MM-DD>.zip
 
-Recording starts, per PMData's docs: btc-5m 2026-02-13; btc-15m/btc-1h
-2026-01-26. Today's archive only appears after the day closes.
+Recording starts: btc-5m 2026-02-13; btc-15m 2026-01-26 (every day from there
+to 2026-09-12 confirmed published, 31.5 GB); btc-1h 2026-01-26 per PMData's
+docs. Today's archive only appears after the day closes.
 """
 
 from __future__ import annotations
@@ -28,18 +33,29 @@ import requests
 
 from .. import db
 
-BASE = "https://api.pmdata.dev"
+BASE = "https://api.pmdata.dev/v1/polymarket"
 SERIES_START = {           # first day each series has an archive for
     "btc-5m": date(2026, 2, 13),
     "btc-15m": date(2026, 1, 26),
     "btc-1h": date(2026, 1, 26),
 }
 DATA_TYPES = ("poly_l2", "poly_trade", "onchain_fills")
+# Local name (archive paths, pmdata_day rows) -> the v1 API's data_type segment.
+# The local names predate the v1 API and are kept so existing archives and
+# pmdata_day rows stay valid.
+API_DATA_TYPE = {"poly_l2": "l2", "poly_trade": "trades", "onchain_fills": "onchain_fills"}
+# Quota units one full archive download costs, per PMData's API reference.
+QUOTA_PER_DAY = {"5m": 144, "15m": 48, "1h": 12}
 TIMEOUT = (30, 300)        # (connect, read) seconds — a day archive is ~330 MB
 
 
 class PMDataError(RuntimeError):
     pass
+
+
+class PMDataQuotaError(PMDataError):
+    """HTTP 429: the account's download quota is used up. Every later request
+    will fail the same way, so a backfill should stop rather than keep asking."""
 
 
 def api_key() -> str:
@@ -66,8 +82,19 @@ def day_file(series: str, data_type: str, day: date) -> Path:
 
 
 def day_url(series: str, data_type: str, day: date) -> str:
-    name = f"{series}_{data_type}_{day:%Y-%m-%d}.zip"
-    return f"{BASE}/polymarket/{series}/{data_type}/{name}"
+    """v1 ZIP API: ``/v1/polymarket/{l2|trades|onchain_fills}/YYYY/MM/DD/{asset}-{tf}.zip``.
+
+    ``series`` is ``<asset>-<timeframe>`` (e.g. ``btc-15m``), which is exactly the
+    archive's file stem on the v1 API.
+    """
+    api_type = API_DATA_TYPE.get(data_type, data_type)
+    return f"{BASE}/{api_type}/{day:%Y/%m/%d}/{series}.zip"
+
+
+def quota_cost(series: str, days: int = 1) -> "int | None":
+    """Quota units a full download of ``days`` archives of ``series`` costs."""
+    unit = QUOTA_PER_DAY.get(series.rsplit("-", 1)[-1])
+    return None if unit is None else unit * days
 
 
 def day_range(series: str, start: "date | None", end: "date | None") -> "list[date]":
@@ -126,6 +153,9 @@ def download_day(series: str, data_type: str, day: date, *,
                stream=True, timeout=TIMEOUT) as r:
         if r.status_code == 404:
             return {"day": day, "status": "missing", "bytes": 0}
+        if r.status_code == 429:
+            raise PMDataQuotaError(
+                f"{series}/{data_type} {day}: download quota used up ({r.text[:200]})")
         if r.status_code == 416:            # already have the whole body
             part.rename(dest)
             return {"day": day, "status": "ok", "bytes": dest.stat().st_size,
@@ -173,6 +203,6 @@ def archive_size() -> "tuple[int, int]":
     return len(files), sum(p.stat().st_size for p in files)
 
 
-__all__ = ["PMDataError", "api_key", "archive_root", "day_file", "day_url",
-           "day_range", "download_day", "local_days", "archive_size",
-           "SERIES_START", "DATA_TYPES"]
+__all__ = ["PMDataError", "PMDataQuotaError", "api_key", "archive_root", "day_file",
+           "day_url", "quota_cost", "day_range", "download_day", "local_days",
+           "archive_size", "SERIES_START", "DATA_TYPES"]

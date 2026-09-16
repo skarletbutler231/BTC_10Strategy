@@ -541,3 +541,50 @@ PRESETS: dict = {
         "predict_direction": "Reversion",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    10,782  59.62% +20.0 |  8,706  59.75% | 59.10% (59.0/59.2)   790  58.99% | 52.4% (2017)
+    #   Balanced   5,477  59.56% +14.1 |  4,368  59.34% | 60.85% (61.7/59.9)   399  59.65% | 53.6% (2017)
+    #   Selective  2,393  60.38% +10.2 |  1,968  59.76% | 64.18% (66.9/61.2)   157  61.78% | 44.9% (2017)
+    #
+    # Reversion with a with-trend EMA200 gate in every tier, min_agree 1. Volume
+    # uses 4/8/16-bar horizons (1h / 2h / 4h - the wall-clock scale of the 5m
+    # 12/24/48 preset) and no opposing-bar requirement; the thinner tiers push
+    # the horizons out and add the 0.75-ATR opposing bar.
+    # *** THE PICK. *** 59.10% train -> 58.99% holdout on 790 bets, zero
+    # shrinkage; 59.75% on the unswept years, z +20.0 over 10,782 bets.
+    "PM 15m Volume": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.2, "h_fast": 4, "h_mid": 8,
+        "h_slow": 16, "ma_length": 200, "ma_type": "EMA", "min_agree": 1,
+        "predict_direction": "Reversion", "require_fast": False,
+        "require_opposing_bar": False, "trend_logic": "With Trend",
+        "use_trend_filter": True, "vol_atr_length": 50, "z_threshold": 2.0,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.2, "h_fast": 8, "h_mid": 24,
+        "h_slow": 96, "ma_length": 200, "ma_type": "EMA", "min_agree": 1,
+        "opposing_bar_min_atr": 0.75, "predict_direction": "Reversion",
+        "require_fast": False, "require_opposing_bar": True,
+        "trend_logic": "With Trend", "use_trend_filter": True, "vol_atr_length": 50,
+        "z_threshold": 2.0,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.2, "h_fast": 12, "h_mid": 24,
+        "h_slow": 48, "ma_length": 200, "ma_type": "EMA", "min_agree": 1,
+        "opposing_bar_min_atr": 0.75, "predict_direction": "Reversion",
+        "require_fast": False, "require_opposing_bar": True,
+        "trend_logic": "With Trend", "use_trend_filter": True, "vol_atr_length": 50,
+        "z_threshold": 2.5,
+    },
+})

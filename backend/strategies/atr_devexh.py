@@ -227,6 +227,45 @@ class AtrDevExh(Strategy):
                 "predict_direction": "Reversion", "use_trend_filter": True,
                 "trend_mode": "Against Trend", "ma_type": "EMA", "ma_length": 200,
             },
+            # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+            # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+            # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+            # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+            # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+            # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+            # train z >= 2.5; the pick is the best train hit rate less one standard error.
+            # Flat $1 per bet, next-candle direction:
+            #
+            #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+            #   Volume     6,999  59.02% +15.1 |  5,061  59.93% | 57.62% (57.6/57.6)   685  54.89% | 55.2% (2026)
+            #   Balanced   4,689  56.13%  +8.4 |  3,431  55.46% | 58.05% (57.1/59.1)   419  57.76% | 46.8% (2017)
+            #   Selective  1,520  60.53%  +8.2 |  1,052  61.41% | 60.92% (63.2/58.8)   143  53.15% | 54.0% (2017)
+            #
+            # Accelerating 5-bar velocity into a Donchian extreme, faded. Balanced (100-bar
+            # channel, no trend gate) is the tier that replicates: 58.05% train -> 57.76%
+            # holdout. Volume (10-bar channel + EMA200) shrinks to 54.89% and Selective
+            # (30-bar) to 53.15% on 143 bets.
+            "PM 15m Volume": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "donchian_confirm": 2,
+                "donchian_length": 10, "ma_length": 200, "ma_type": "EMA",
+                "predict_direction": "Reversion", "trend_mode": "With Trend",
+                "use_trend_filter": True, "velocity_lookback": 5,
+                "velocity_mode": "Accelerating",
+            },
+            # *** THE PICK. ***
+            "PM 15m Balanced": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "donchian_confirm": 2,
+                "donchian_length": 100, "predict_direction": "Reversion",
+                "use_trend_filter": False, "velocity_lookback": 5,
+                "velocity_mode": "Accelerating",
+            },
+            "PM 15m Selective": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "donchian_confirm": 2,
+                "donchian_length": 30, "ma_length": 200, "ma_type": "EMA",
+                "predict_direction": "Reversion", "trend_mode": "With Trend",
+                "use_trend_filter": True, "velocity_lookback": 5,
+                "velocity_mode": "Accelerating",
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

@@ -38,8 +38,10 @@ engine — is pure standard-library Python.
 
 ### Strategies
 
-In dashboard dropdown order. Every one ships Polymarket-tuned 5m presets; the
-linked sections document how each was fitted and what it is worth.
+In dashboard dropdown order. Every one ships Polymarket-tuned 5m presets, and
+`PM 15m` presets fitted with a holdout for the 15-minute market (see
+[Polymarket 15m presets](#polymarket-15m-presets)); the linked sections
+document how each was fitted and what it is worth.
 
 | # | Strategy | Idea |
 |---|----------|------|
@@ -176,15 +178,21 @@ agree with recorded outcomes 99.6% of the time). Net result: **99.9% of ~9,400
 windows carry a UP/DOWN label**, split ~50/50 (no directional bias).
 
 Live ingest is driven by **`run_updaters.sh`** — the single entry point for every
-market.db updater (`stream` = Chainlink + Polymarket, `binance` = 1m candles,
-`pmdata` = Polymarket L2 order book, `all` = all three). Each job takes its own
-`flock` lock, so the fast and slow jobs run at their own cadences without ever
-colliding:
+market.db updater (`stream` = Chainlink + Polymarket, `twap` = Chainlink TWAPs,
+`pm15m` = the 15-minute market capture, `binance`/`binance1m`/`binance1s` =
+Binance candles, `pmdata`/`pmdata15m` = Polymarket L2 order book, `all` = every
+job except `pmdata15m`). Each job takes its own `flock` lock, so the fast and slow
+jobs run at their own cadences without ever colliding:
 
 ```cron
-* * * * *    <proj>/run_updaters.sh stream  >> <proj>/data/ingest_stream.log 2>&1
-*/30 * * * * <proj>/run_updaters.sh binance >> <proj>/data/binance_ingest.log 2>&1
-40 1 * * *   <proj>/run_updaters.sh pmdata  >> <proj>/data/pmdata_ingest.log 2>&1
+* * * * *    <proj>/run_updaters.sh stream    >> <proj>/data/ingest_stream.log 2>&1
+* * * * *    <proj>/run_updaters.sh twap      >> <proj>/data/twap_ingest.log 2>&1
+* * * * *    <proj>/run_updaters.sh pm15m     >> <proj>/data/pm15m_ingest.log 2>&1
+* * * * *    <proj>/run_updaters.sh binance1s >> <proj>/data/binance_1s.log 2>&1
+* * * * *    <proj>/run_updaters.sh binance1m >> <proj>/data/binance_1m_tail.log 2>&1
+*/30 * * * * <proj>/run_updaters.sh binance   >> <proj>/data/binance_ingest.log 2>&1
+40 1 * * *   <proj>/run_updaters.sh pmdata    >> <proj>/data/pmdata_ingest.log 2>&1
+50 1 * * *   <proj>/run_updaters.sh pmdata15m >> <proj>/data/pmdata15m_ingest.log 2>&1
 ```
 
 Read the data back with `backend/pm_store.py`: `coverage()`, `windows(lo, hi)`,
@@ -199,6 +207,55 @@ price at/just before a given second into a window, i.e. a realistic fill price.
 tick — `pm_quote.p_up_bin` (Binance-fed) and `p_up_chain` (Chainlink-fed) — which
 power the PM Edge strategy below. (`p_up_bin` only exists from ~2026-07-07, when
 pmqb added the Binance-fed model.)
+
+## Chainlink 30s + 60s TWAPs (`ingest_twap` -> `cl_twap`)
+
+Polymarket **settles** the BTC 5m market on a Chainlink TWAP, not on spot — the
+30s stream until `2026-08-14 00:00 UTC`, the 60s stream after it. pmqb writes
+both averages on every snapshot line, and `ingest_twap` folds them into one row
+per captured second:
+
+```bash
+python3 -m backend.data.ingest_twap            # backfill (first run) / append (later)
+python3 -m backend.data.ingest_twap --reset    # rescan from offset 0
+```
+
+| `cl_twap` column | |
+|---|---|
+| `time` | capture second, unix seconds UTC (**primary key**) |
+| `twap30` / `twap60` | Chainlink BTC/USD 30s and 60s TWAP as of `time` |
+| `obs_ts` | Chainlink's own observation stamp for that report |
+| `obs_win` | which window `obs_ts` belongs to — `30` before the cutover, `60` after |
+
+**Loaded as of 2026-08-20** — `2026-08-04 05:30 .. now`, **1.41M rows**, 99% of
+every second (the feed publishes ~0.95 reports/sec, so some seconds have none).
+The series starts on 08-04 because that is when pmqb began recording the fields.
+`obs_ts` runs ~1.5 s behind `time`: that is our ingestion lag, and keeping it on
+the row is what makes it measurable rather than assumed.
+
+Sanity check against Polymarket's own strikes — joining `cl_twap` to
+`pm_window.start_price` at the window boundary:
+
+| | vs `twap30` | vs `twap60` |
+|---|---|---|
+| windows **before** the cutover | **MAE $0.62** | MAE $3.36 |
+| windows **after** the cutover | MAE $3.13 | **MAE $0.85** |
+
+i.e. the right column wins on the right side of `2026-08-14`, which is both a
+check on the data and a reminder that **a query spanning that date must switch
+columns at it**.
+
+> Deliberately **not** in `candles`. These are smoothed averages — a 30s TWAP
+> lags spot by ~15 s, and differencing a 30s-averaged series recovers only ~91%
+> of true volatility — so they must never be mistaken for the `BTCUSD_CL` spot
+> series sitting next to them. Kept per-second rather than per-minute because the
+> thing they are *for* is the boundary-aligned settlement price, and a 1m OHLC
+> fold destroys the boundary second.
+>
+> It is also a **separate job from `stream`**, with its own cursor under a
+> `twap:` prefix in `stream_cursor`. `ingest_stream`'s cursor was already parked
+> at the end of an 11 GB file, so teaching it about TWAP would have meant a full
+> `--reset` — rewriting every `pm_quote` row — just to pick up the history.
 
 > **DB location:** the store path comes from `MARKET_DB` in `.env` (a shared
 > `…/database/market.db`), and `backend/db.py` now reads `.env` itself — so any
@@ -239,10 +296,14 @@ Needs `PMDATA_API_KEY` in `.env`. Two things about the scale drive the whole des
   defaulting beside `market.db`) and SQLite gets the state folded onto a
   **1-second grid** — a 238x row reduction. The archive is the source of truth:
   any other resolution can be re-derived from it later without re-downloading.
-- **PMData bills by *day unlocked*, not by request** — and an unlocked day is
-  then free forever, across every series *and* data type. That is exactly why the
-  archives are never re-fetched: rebuilding the tables costs nothing, but
-  re-downloading a day you deleted would cost quota.
+- **PMData charges quota per archive download** — 144 units for a 5m day, 48 for
+  15m, 12 for 1h — and a repeat download is charged again; only a byte range
+  starting after byte 0 (a resume) is free. (The 5m backfill ran under PMData's
+  older *day unlocked* billing; the API reference changed by 2026-09.) Either way
+  the archives are never re-fetched: rebuilding the tables costs nothing, but
+  re-downloading a day you deleted costs quota. On HTTP 429 (quota used up) a
+  run stops at once instead of asking for every remaining day, and `--dry-run`
+  prints what a run would download and its quota cost without downloading.
 
 Four tables (see `backend/db.py` for the full schema):
 
@@ -357,6 +418,83 @@ when there is nothing new:
 > top-of-book + depth-bucket table (~21 MB/day) if that footprint matters; the
 > ladder can be folded in later from the archive without spending quota.
 
+### 15-minute markets (`--series btc-15m`)
+
+PMData publishes the **btc-15m** series as well: **every day from 2026-01-26 to
+2026-09-12 (230 days, 31.5 GB, no gaps)**, ~110–200 MB a day — probed with
+zero-quota range requests on 2026-09-13. `ingest_pmdata` folds it with the same
+code into its own tables, because every L2 key is the window `start_ts` alone and
+a 15m window shares it with the 5m window that opens at the same moment:
+
+| 5m table | 15m table |
+|---|---|
+| `pm_l2_market` | `pm_l2_market_15m` |
+| `pm_l2_quote` | `pm_l2_quote_15m` |
+| `pm_l2_book` | `pm_l2_book_15m` |
+
+```bash
+python3 -m backend.data.ingest_pmdata --series btc-15m --dry-run   # days + quota, no download
+python3 -m backend.data.ingest_pmdata --series btc-15m             # 230 days = 11,040 units
+python3 -m backend.data.ingest_pmdata --series btc-15m --status
+```
+
+Read it with the same `pm_store` helpers plus `series="15m"` —
+`l2_quote_at(start_ts, elapsed, series="15m")`, `l2_fill(..., series="15m")`.
+
+**Loaded as of 2026-09-13: one day.** The full backfill was started and PMData
+returned *"Download quota has been used up"* after the first archive
+(2026-01-26, 48 units), so the account's quota needs to reset or be raised before
+the other 229 days (10,992 units) can be fetched. Re-running the command above
+resumes from 2026-01-27 without re-spending the day already on disk. That first
+day checks out against the 5m data's own invariants: 64 markets (recording began
+08:00 UTC, as the 5m series' first day did), 100,617 second-rows, zero
+`bid<=0` / `ask>=1` / crossed rows, and 63 of 64 outcomes derived from the
+settled book (`'terminal'` — the feed's `market_resolved` events only begin
+~2026-03-28, the same as 5m). One difference from 5m: **15m markets trade before
+their window opens** — rows start up to ~15 minutes before `start_ts`, so
+`time - start_ts` can be negative.
+
+The 15m markets settle on the **Chainlink BTC/USD 60s TWAP** (Gamma
+`cryptoMarketConfig`: `btc-15m-twap-60`), as the 5m markets have since 2026-08-14.
+
+## The 15-minute market capture (`ingest_pm15m`)
+
+Independently of PMData, pmqb runs a standalone 15m recorder next to its trading
+platform — `research/capture/capturePM15m.ts`, pm2 app `pmqb-pm15m-capture` —
+writing `pmqb/data/pm15m_l2.jsonl`. It never touches `stream.jsonl` or trading
+code. Two record types:
+
+- `pm15m_l2` — the YES and NO books (top 20 levels each) plus the Binance BTC mid,
+  every ~2 s, **since 2026-07-03 05:30 UTC**.
+- `pm15m_outcome` — one per window once Polymarket has resolved it: the outcome,
+  the strike (`priceToBeat`) and the settle price (`finalPrice`), read back from
+  Gamma. **Added 2026-09-13**: before that the capture recorded books only. Gamma
+  publishes the strike only after the close, so the outcome record is where it is
+  captured. The recorder re-checks the last hour of windows when it starts, so a
+  restart does not lose outcomes.
+
+`ingest_pm15m` folds the file into two tables, as a resumable byte-cursor tail
+like `ingest_stream` (only complete lines are consumed, so a line still being
+written is picked up next run):
+
+- **`pm_window_15m`** — one row per market: `start_price` (strike), `end_price`
+  (settle), `resolved_up`, `resolved_src='gamma'`.
+- **`pm_quote_15m`** — per (window, second): YES `yes`/`yes_bid`/`yes_ask`, size at
+  the best, total depth over the captured levels, and `btc`. YES side only — the
+  book is symmetric (`no_bid = 1 - yes_ask`), so NO adds nothing.
+
+```bash
+python3 -m backend.data.ingest_pm15m                    # backfill / append (per-minute cron: pm15m)
+python3 -m backend.data.ingest_pm15m --backfill-gamma   # resolve closed windows with no outcome
+python3 -m backend.data.ingest_pm15m --status
+```
+
+Windows captured before outcome records existed are resolved by
+`--backfill-gamma`, which asks Gamma for each closed window without an outcome
+and records Polymarket's own answer (never a price comparison of our own). Run it
+again after any capture outage. It writes in short bursts so it never holds
+`market.db` locked against the per-minute ingest jobs.
+
 ## PM Edge — Polymarket market-vs-model strategy
 
 A **Polymarket-native** strategy (not a candle strategy): it trades the 5-minute
@@ -411,6 +549,13 @@ scripts that produced these numbers are research artifacts, not in the repo.
      profit factor, max drawdown, exit-type breakdown, avg hold,
    - a per-trade table.
 4. **Load chart** shows the candles alone (no signals) for the chosen range.
+5. **Times** (UTC / Local) is the basis for every time on the page — the chart
+   axis, the crosshair, the trade table, and the Start/End dates. UTC matches
+   Binance's candle grid and the backend; Local is this browser's timezone, and
+   the note beside the dates shows which (`UTC+09`). Candle timestamps are never
+   shifted — only labels change, so DST stays correct — and in Local mode the
+   Start/End days are sent as their real epoch boundaries, so `09/10` means the
+   local 10th, not the UTC one. The choice is remembered in the browser.
 
 ## How the backtest works
 
@@ -430,7 +575,8 @@ to every strategy.
 The top-bar **Mode** selector switches how signals are scored:
 
 - **TP / SL** (default) — the TP/SL/time-stop simulation described above.
-- **Polymarket up/down** — models a Polymarket-style **5-minute binary market**.
+- **Polymarket up/down** — models a Polymarket-style **5- or 15-minute binary
+  market** (set the interval to match; the presets are named for theirs).
   Each signal is an *independent* bet placed at the next candle's open and
   resolved purely on that candle's **direction** (close vs open); TP/SL are
   ignored. You set the **Odds** (entry price, cost per $1 share); a WIN pays $1.
@@ -442,6 +588,132 @@ The top-bar **Mode** selector switches how signals are scored:
   BTC 5-min direction is close to a coin flip (~50%), so realistic edges are
   small — treat a few points above 50% as thin, not a sure thing. The BB Squeeze
   **Polymarket 5m (Reversion)** preset is tuned for this mode (interval 5m).
+
+Neither mode stakes anything but a flat $1. For a staking scheme priced against
+the real book — re-bet the same direction after a loss, sized so the win repays
+the chain — see [Recovery-sized martingale](#recovery-sized-martingale-pm_martingale).
+
+## Polymarket 15m presets
+
+Polymarket runs a **15-minute** BTC up/down market next to the 5-minute one.
+Every strategy now ships three `PM 15m` presets — **Volume**, **Balanced**,
+**Selective** — fitted on 15m bars, with the fitter checked in as
+`backend/data/pm_preset_sweep.py` so the run is reproducible:
+
+```bash
+python3 -m backend.data.pm_preset_sweep --interval 15m --all --workers 30   # ~70 min on 16 cores
+python3 -m backend.data.pm_preset_sweep --interval 15m --report              # re-score the picks
+```
+
+It is a multi-process sweep (`fork`-pool, one config per task, the candle list
+shared copy-on-write) that scores every configuration by calling the
+strategy's own `generate_signals` in the same next-candle mode the dashboard
+uses — there is no private re-implementation, so what it measures is what the
+**Polymarket up/down** mode runs. 133,016 configurations across 23 strategies,
+grids in the file.
+
+### Method
+
+The one the CHoCH presets were fitted with, applied to every strategy:
+
+- **Train** 2024-09-13 → 2025-12-13 (15 months, 43,776 bars): selection
+  happened here and only here.
+- **Holdout** 2025-12-13 → 2026-09-13 (9 months, 26,374 bars): scored once,
+  after the picks were frozen.
+- **Unswept** 2017-08 → 2024-09: never loaded by the sweep; reported as a
+  second, larger out-of-sample check.
+- Tiers are **bands of train bets** — Volume ≥ 1,200, Balanced 500–1,199,
+  Selective 200–499 — so the three picks are always distinct configs.
+  Admission needs both halves of train ≥ 52% and train z ≥ 2.5; within a band
+  the pick is the highest train hit rate less one standard error.
+- Lookbacks count bars, so every grid carried both the 5m bar counts and
+  their wall-clock thirds (a 5m 12/24/48 is a 15m 4/8/16). The winners split:
+  RSI + BB, CCI Williams and CHoCH kept the bar counts; Multi Horizon, Stoch
+  Wick and Reversal moved to the wall-clock scale.
+
+The yardstick is 50%, not 48.4%: 15m candles close flat only 0.05% of the
+time over the window (3.1% on 1m) and up 49.9%.
+
+### What it found
+
+Pooled over all 68 presets the holdout is **57.47%** on 36,347 bets. 18 presets
+*improve* into the holdout, 17 hold within 2pp, 18 shrink 4pp or more — and the
+shrinkage is concentrated in the Selective tiers, exactly the 5m pattern. The
+table is the recommended tier per strategy (the tier the preset notes call the
+pick; ✗ marks the three strategies with none), sorted by holdout:
+
+| Strategy | Pick | Bets 2017–26 | Hit | z | Unswept 17–24 | Train | HOLDOUT | Holdout bets |
+|---|---|--:|--:|--:|--:|--:|--:|--:|
+| Volume Exhaustion | PM 15m Volume | 17,201 | 56.35% | +16.6 | 56.11% | 55.33% | **59.72%** | 1,775 |
+| RSI + BB | PM 15m Volume | 9,420 | 60.14% | +19.7 | 60.08% | 60.73% | **59.69%** | 779 |
+| Candlesticks | PM 15m Volume | 8,545 | 59.68% | +17.9 | 60.36% | 57.60% | **59.61%** | 926 |
+| Elliott Wave | PM 15m Balanced | 4,797 | 56.87% | +9.5 | 56.35% | 58.00% | **59.50%** | 437 |
+| Reversal | PM 15m Volume | 6,283 | 56.69% | +10.6 | 56.17% | 57.46% | **59.46%** | 523 |
+| Renko | PM 15m Volume | 8,298 | 58.72% | +15.9 | 59.02% | 57.19% | **59.43%** | 811 |
+| CCI Williams | PM 15m Volume | 8,611 | 60.78% | +20.0 | 61.49% | 58.92% | **59.33%** | 804 |
+| Regime Switch | PM 15m Balanced | 5,536 | 60.17% | +15.1 | 59.98% | 61.49% | **59.23%** | 569 |
+| Multi Horizon | PM 15m Volume | 10,782 | 59.62% | +20.0 | 59.75% | 59.10% | **58.99%** | 790 |
+| Momentum Indicators | PM 15m Volume | 16,742 | 59.66% | **+25.0** | 60.09% | 58.32% | **58.72%** | 1,565 |
+| Zscore MS | PM 15m Volume | 10,195 | 58.95% | +18.1 | 59.12% | 58.26% | **58.54%** | 849 |
+| Gann Angles | PM 15m Volume | 12,819 | 56.83% | +15.5 | 56.67% | 56.93% | **57.96%** | 1,168 |
+| CHoCH | PM 15m Volume | 7,970 | 57.47% | +13.3 | 57.31% | 57.98% | **57.82%** | 780 |
+| ATR DevExh | PM 15m Balanced | 4,689 | 56.13% | +8.4 | 55.46% | 58.05% | **57.76%** | 419 |
+| Stoch Wick | PM 15m Volume | 4,878 | 58.86% | +12.4 | 59.41% | 58.05% | **57.61%** | 552 |
+| Jump Exhaustion | PM 15m Volume | 20,627 | 56.51% | +18.7 | 56.41% | 56.57% | **57.27%** | 1,774 |
+| BB Squeeze | PM 15m Volume | 9,820 | 59.60% | +19.0 | 59.82% | 59.87% | **57.24%** | 849 |
+| Oscillators | PM 15m Volume | 8,993 | 59.41% | +17.9 | 59.60% | 59.87% | **57.09%** | 811 |
+| Fib Retracement | PM 15m Balanced | 3,608 | 56.43% | +7.7 | 55.65% | 60.04% | **56.89%** | 283 |
+| Support & Resistance | PM 15m Volume | 21,683 | 56.09% | +17.9 | 55.97% | 56.62% | **56.18%** | 1,935 |
+| Fair Value Gap ✗ | PM 15m Selective | 1,333 | 55.36% | +3.9 | 53.96% | 59.72% | 58.28% | 151 |
+| Harmonic Patterns ✗ | PM 15m Volume | 9,163 | 57.78% | +14.9 | 58.20% | 57.45% | 54.62% | 811 |
+| Trend Lines ✗ | PM 15m Balanced | 3,440 | 56.60% | +7.7 | 56.69% | 57.83% | 53.57% | 308 |
+
+Pooled over the twenty picks the holdout is **58.30%** on 18,399 bets. Each
+strategy file carries the full three-tier table with per-half train, worst
+calendar year and the notes on what won and why; the rest of this section is
+what carries across the whole board.
+
+**Every edge is still a fade.** Not one tier in 23 strategies follows the
+move. Structure breaks are traded backwards (Reversal, CHoCH, Support &
+Resistance, Gann, Trend Lines all pick *Against Signal* / *Continuation* / *Against
+Structure*), band and oscillator extremes are faded, the marubozu is faded
+after an extension, the Renko brick is faded, Wave 5 is faded. The 5m verdict
+holds one timeframe up.
+
+**The same nulls.** Gann's angles do not earn — both admitted tiers set
+`unit_atr_mult = 0.002` with only the 1×1 on, which is a flat level, and fade
+its break. RSI + BB's rejection-wick and recovery-close filters are zero in
+every tier. BB Squeeze's Volume and Balanced tiers do not require a squeeze.
+Only the band entry earns in Oscillators (Zone Entry, faded, in all three).
+
+**Three do not survive on 15m.** *Trend Lines* posts 52–54% on the holdout in
+every tier and 50.3% in Selective; *Harmonic* keeps 54.6% only in Volume and
+collapses to 51% in the other two; *Fair Value Gap* is real (z +9.6 over the
+record) but thin — 52.7% on 1,506 holdout bets — with only its 151-bet
+Selective tier above 58%. Their presets ship with a NOT RECOMMENDED note so the
+failure is on record next to the 5m ones.
+
+**Renko is path-dependent.** Its brick ladder is built from the first loaded
+bar, so the exact bet count moves by a few with the loaded start date; the
+preset notes quote both the sweep-window and the whole-record runs. Every other
+strategy reproduces its sweep numbers to the bet through
+`polymarket.run_binary_backtest`.
+
+**Caveats.** The holdout is nine months of one regime, and 2026 has been a
+kind tape for reversion — Volume Exhaustion's *improvement* into the holdout
+(55.3% → 59.7%) is that tape, not a better preset. The unswept-years column is
+the longer check, and it agrees with the holdout to within a point or two for
+every pick above. Hit rate is the finding; the EV at 0.50 odds assumes a 0.50
+fill, which a real book will not offer at the strike — see
+[Capacity: the edge is ~2 cents wide](#capacity-the-edge-is-2-cents-wide) for
+what the 5m ladder actually fills at. Real 15m quotes now exist —
+`pm_quote_15m` from 2026-07-03 (see
+[the 15-minute market capture](#the-15-minute-market-capture-ingest_pm15m)) — and
+RSI + BB's Volume pick has been priced against them: 56.59% real hit at a 0.537
+fill, which the taker fee turns into +1.1pp of edge. See
+[The 15-minute market: RSI + BB *PM 15m Volume*](#the-15-minute-market-rsi--bb-pm-15m-volume).
+The other presets are still unpriced. Days and bars are UTC; a bar is stamped by
+its open time.
 
 ## Multi Horizon (strategy #10)
 
@@ -2471,6 +2743,1593 @@ recency check rather than out-of-sample evidence — budget a few points of
 shrinkage. The Hi Hit tiers are thin (734 and 991 bets, ~80-110/year); *PM 5m
 Hi Hit* shows 69.33% over 2024-26 but on only 150 bets (±4pp standard error), so
 treat it as suggestive. Days are UTC.
+
+## Polymarket backtesting page (`/pm-backtest`)
+
+A page of its own, because the main dashboard's *Polymarket up/down* mode is a
+model, not a record: it assumes a flat user-chosen entry price and resolves each
+bet on the **Binance candle's direction**. This page uses neither.
+
+```
+./run.sh    ->    http://localhost:$PORT/pm-backtest
+```
+
+**Both halves of every bet come from the market.** The entry price is the
+executable book — YES at the ask for an UP bet, NO at `1 - yes_bid` for a DOWN
+bet — read at a fixed offset into the window, the same offset every time so
+there is no hindsight. The outcome is the market's **own Chainlink-settled
+resolution**, never the Binance candle, which only lands on the same side of the
+strike ~85% of the time. Windows come from both captures merged
+(`pm_l2_*` + `pm_window`/`pm_quote`), with the exchange feed's own outcome
+preferred over our Chainlink capture over the L2 terminal-book derivation.
+
+| Panel | What it controls |
+|---|---|
+| **Market** (top bar) | **5m** or **15m** BTC up/down. Each market has its own price record, its own fitted playbooks and its own fee, so switching it swaps the strategy cards, the date range and the fee defaults. |
+| **Overlapping signals** | The mode switch: what happens when several books signal the same window. **Every book trades** (mode 1) — each takes its own chain, so correlated signals stack and capital adds. **One trade per window** (mode 2) — the books share one account holding at most one position per window; the first book in the list takes a contested window and the rest yield. See [below](#one-book-per-strategy-not-one-setting-for-all). |
+| **Select Strategies** | One card per strategy: enable it, pick a **playbook**, or unfold the card to override its preset, ladder depth, chain target and filters by hand. Only strategies with a playbook measured on the selected market are listed. In mode 2 the list order is the priority order. |
+| **Execution** | Entry offset (s), Executable/Mid pricing, **fee model** and rate, max entry price, and **Walk the ladder** — these describe the *account*, so they apply to every book. |
+
+**Fee model.** *Winnings take* is a flat cut of a winning share's profit
+(`breakeven(p) = p + fee·(1−p)`). *Taker* is Polymarket's crypto-market fee,
+charged on every **buy** as `shares × fee × p × (1−p)` — about 1.7c a share at
+55c, and a losing rung loses it too; makers pay nothing. The 15m market defaults
+to taker at its documented 0.07, the 5m page keeps its 0% winnings default. The
+per-rung **Edge** column is hit rate minus the fee-inclusive breakeven.
+
+### The 15m market
+
+`Market → 15m` reads pmqb's 15-minute capture (`pm_window_15m` / `pm_quote_15m`,
+2s book snapshots from 2026-07-03, outcomes from Gamma) and steps rungs 900s
+apart. Resting size exists for every 15m window, so *book leaning your way*
+works throughout; the full ladder does not (`pm_l2_book_15m` holds one PMData
+day, before the record), so *Walk the ladder* is top-of-book on 15m until the
+btc-15m backfill has quota. Three RSI + BB playbooks are wired up — see
+[The 15-minute market: RSI + BB *PM 15m Volume*](#the-15-minute-market-rsi--bb-pm-15m-volume)
+for how they were measured:
+
+| Playbook | Preset | Depth | Filter | Measured (real prices, taker 7%, $1 target, 2026-07-03 .. 09-13) |
+|---|---|---:|---|---|
+| **15m · Fitted · D1 · push3** | PM 15m Volume | 1 | hard push (`push3 ≥ 0.3`) | +17.56 on 111 chains, 62.16% hit, maxDD −13.62 |
+| 15m · Unfiltered · D3 | PM 15m Volume | 3 | — | +49.04 on 157 chains, maxDD −17.79, 8x the capital; loses to D1 per dollar of bankroll on every multi-year candle period |
+| 15m · Unfiltered · D1 | PM 15m Volume | 1 | — | +4.75 on 205 chains, 56.59% — what push3 is worth |
+
+### One book per strategy, not one setting for all
+
+The fitted answer differs per strategy — RSI + BB and Stoch Wick both want a
+retry inside the US session, CCI Williams, Candlesticks and Reversal each want
+a flat bet in an overlapping but differently-bounded window (16-01, 16-02,
+14-00), Volume Exhaustion wants a flat bet all day, Jump Exhaustion wants a flat
+bet *overnight*, and Harmonic Patterns wants a **three-rung ladder** in a
+four-hour window — so
+forcing one depth and one filter on all of them would misrepresent every
+strategy but the one it was fitted to. Each selected strategy therefore runs as
+its **own book**, on its own depth, target and entry filters, and the books are
+aggregated afterwards. They are *not* merged into one signal stream: two
+strategies whose fitted depths differ cannot share a chain, and their chains may
+legitimately overlap in time.
+
+Aggregation follows from that:
+
+* **Capital adds.** ``peak_chain_exposure`` is the SUM of each book's own peak —
+  the worst case where every book is deepest at once — not the max.
+* **Drawdown is recomputed** on the merged, time-ordered equity curve, because
+  two books' bad weeks need not coincide. Over 2026-03-04 .. 2026-09-04 the
+  eight fitted books draw down **−76.57** together against −23.07 / −17.80 /
+  −21.59 / −17.02 / −11.67 / −12.65 / −10.80 / −22.43 apart — far under their
+  −137.03 sum, so the diversification is real, but it is worth measuring rather
+  than assuming: five of the eight trade an overlapping afternoon session, so
+  they concentrate rather than diversify. Adding Harmonic Patterns is the one
+  case that barely moved the joint drawdown at all (−75.34 to −76.57) despite
+  its own −22.43, because depth 3 wins 93% of its chains and loses in different
+  weeks from the flat books.
+* **Per-rung stays per book** — ladders of different depths must not be averaged
+  into one row, so that table stacks the books under their own headers.
+
+That is the page's **Every book trades** mode (`mode: "independent"`). The
+**One trade per window** switch (`mode: "one_per_window"`) keeps the books but
+shares one account between them: at most one position is open in any window,
+so a signal that lands on a window some book is already in — as a fresh chain
+or as a later rung — is not traded, and when several books fire on the same
+free window the first in the list takes it (a book that disagrees on the side
+simply loses the window). Filters run first, so a signal a book filters out
+does not consume the window for the rest. Each book's stats then separate the
+two reasons a signal was not traded — `signals_skipped_in_chain` (its own chain
+was still running) and `signals_yielded` (another book held the window) — and
+`peak_chain_exposure` is the deepest single chain rather than the sum of book
+peaks, because the chains can no longer overlap. The engine call is
+`pmm.run_books(books, market, one_per_window=...)`; `pmm.run` is its one-book
+case.
+
+Measured on the three fitted 5m books RSI + BB, Stoch Wick and Volume
+Exhaustion over 2026-06-01 .. 2026-09-04: mode 1 plays 1,357 chains for
++217.63 at maxDD −35.63 on 22.07 peak capital; mode 2 yields 142 of those
+signals and plays 1,221 for +203.05 at maxDD −21.62 on 8.52 — 7% less P&L for
+39% of the capital and 61% of the drawdown, which is what not stacking
+correlated signals is worth.
+
+### Playbooks
+
+A playbook is one *measured* configuration: signal preset + ladder depth + entry
+filters, with the numbers it earned. They live in `PM_STRATEGIES` in
+`backend/main.py`, and the page renders them from `/api/pm_backtest/schema`.
+
+| Strategy | Playbook | Preset | Depth | Filter | Measured |
+|---|---|---|---:|---|---|
+| RSI + BB | **Fitted · D2 · 16-01** | PM 5m Volume - 2yr Train | 2 | 16-01 UTC | +167.53, maxDD −23.07 |
+| | Flat · D1 · 16-01 | PM 5m Volume - 2yr Train | 1 | 16-01 UTC | +95.16, 26.8x peak capital |
+| | Unfiltered · D2 | PM 5m Volume - 2yr Train | 2 | — | +142.34, maxDD −42.17 |
+| | Volume preset · D2 · 16-01 | PM 5m Volume | 2 | 16-01 UTC | +133.30 |
+| Stoch Wick | **Fitted · D2 · 16-01** | PM 5m Volume | 2 | 16-01 UTC | +145.83, maxDD −17.80 |
+| | Flat · D1 · 16-01 | PM 5m Volume | 1 | 16-01 UTC | +92.06, maxDD −13.86 |
+| | Unfiltered · D2 | PM 5m Volume | 2 | — | +50.64 — what the filter is worth |
+| Volume Exhaustion | **Fitted · D1 · no filter** | PM 5m Selective | 1 | — | +134.17, 21.9x peak capital |
+| | D2 · no filter | PM 5m Selective | 2 | — | +139.90 for 2.3x the capital |
+| | D2 · 16-01 | PM 5m Selective | 2 | 16-01 UTC | +116.15 on a third of the chains |
+| Jump Exhaustion | **Fitted · D1 · 17-06** | PM 5m Volume - 2yr Train | 1 | 17-06 UTC | +124.55, maxDD −17.02, 31.1x peak capital |
+| | D3 · 17-06 | PM 5m Volume - 2yr Train | 3 | 17-06 UTC | +263.96 but maxDD −50.30 |
+| | Unfiltered · D1 | PM 5m Volume - 2yr Train | 1 | — | +127.48 on paper; +0.0939/chain H1 vs +0.0167 H2 |
+| CCI Williams | **Fitted · D1 · 16-01** | PM 5m Selective | 1 | 16-01 UTC | +117.13, maxDD −11.67, 31.1x peak capital |
+| | D2 · 16-01 | PM 5m Selective | 2 | 16-01 UTC | +160.13, but rung 2 is 69.1% H1 / 50.9% H2 |
+| | Unfiltered · D1 | PM 5m Selective | 1 | — | +51.74 on paper; −$48,177 once the ladder is priced |
+| Candlesticks | **Fitted · D1 · 16-02** | PM 5m Balanced | 1 | 16-02 UTC | +79.95, maxDD −12.65, 22.6x peak capital |
+| | D2 · 16-02 | PM 5m Balanced | 2 | 16-02 UTC | +89.62 for 2.9x the drawdown |
+| | Unfiltered · D1 | PM 5m Balanced | 1 | — | +83.85, maxDD −38.04; +0.0241/chain in H2 vs +0.1485 |
+| Reversal | **Fitted · D1 · 14-00** | PM 5m BOS Balanced | 1 | 14-00 UTC | +96.57, maxDD −10.80, 33.9x peak capital |
+| | D2 · 14-00 | PM 5m BOS Balanced | 2 | 14-00 UTC | +125.01; rung 2 improves out of sample, D1 still wins priced |
+| | Unfiltered · D2 | PM 5m BOS Balanced | 2 | — | +164.87, most raw P&L here, at 13.2x peak capital |
+| Harmonic Patterns | **Fitted · D3 · 14-17** | PM 5m Volume | **3** | 14-17 UTC | +168.39, maxDD −22.43, 10.6x peak capital |
+| | D2 · 14-17 | PM 5m Volume | 2 | 14-17 UTC | +68.49 — rung 3 is this strategy's best rung |
+| | Unfiltered · D3 | PM 5m Volume | 3 | — | +181.50 on paper; −$227,257 once the ladder is priced |
+
+All at a $1 chain target, fee 0, entry +5s, over 2026-03-04 .. 2026-09-04. Bold
+is each strategy's default. Running the eight defaults together: **5,606 chains,
++1,034.12, maxDD −76.57, 66.2% hit rate, 25/27 green weeks.**
+
+Harmonic Patterns is the only book here that defaults to a depth **greater than
+1**, and the only one whose edge sits in the ladder rather than in rung 1. It is
+also by far the most capital-hungry: its peak chain exposure is $15.89 against
+$2.85-$4.00 for the flat books, so it alone accounts for more than a quarter of
+the portfolio's $55.94.
+
+Note that Jump Exhaustion's session is the *opposite* of the other two that have
+one — it wants the overnight 17-06, they want 16-01 — which is exactly why the
+page keeps a filter per book rather than one filter for all.
+
+Results: stat cards, an aggregate equity curve, a **per-period table** (week or
+month), the per-rung table **per book**, and the individual chains with the fill
+price of each rung.
+
+### Adding a strategy or a filter
+
+Both are one edit in `backend/main.py`, and the page picks them up from
+`/api/pm_backtest/schema` with no frontend change:
+
+```python
+PM_STRATEGIES = [
+    {"id": "rsi_bb", "default": "Fitted · D2 · 16-01",
+     "default_15m": "15m · Fitted · D1 · push3", "playbooks": [
+        {"name": "Fitted · D2 · 16-01", "preset": "PM 5m Volume - 2yr Train",
+         "max_depth": 2, "filters": {"hours": "16-01"}, "note": "..."},
+        {"name": "15m · Fitted · D1 · push3", "preset": "PM 15m Volume",
+         "market": "15m", "max_depth": 1, "filters": {"hard_push": True}, "note": "..."},
+    ]},
+]
+PM_FILTERS = [
+    {"key": "hours", "label": "Hours (UTC)", "kind": "text", "default": "",
+     "applies_to": "*", "help": "..."},
+]
+```
+
+A filter's `key` must be handled in `pm_backtest()` (`hours` and
+`skip_after_bust` are), and `applies_to` is a list of strategy ids or `"*"`.
+A playbook's `market` is the window it was measured on (`"5m"` when absent) and
+the page only offers it under that market; `default_15m` names the 15m default
+the way `default` names the 5m one. A playbook naming a preset the strategy does
+not have is dropped rather than erroring, so renaming a preset degrades
+gracefully.
+
+**Eight strategies are wired up so far** — RSI + BB, Stoch Wick, Volume
+Exhaustion, Jump Exhaustion, CCI Williams, Candlesticks, Reversal and Harmonic
+Patterns; the rest get added one at a time as each is checked against the real
+record. Being measured is not the same as being listed: Zscore MS has a
+documented result below and is deliberately *not* on the page.
+
+**Cost note.** Assembling the market dict for a 6-month range takes a few
+seconds and the ladders longer, so both are memoised in `backend/main.py` by
+exactly what they depend on (range + entry offset; candidate windows + offset)
+with capped caches. A first run is ~4-5s, repeats ~1s.
+
+## Recovery-sized martingale (`pm_martingale`)
+
+*If a signal loses, re-bet the same direction in the very next 5-minute window,
+sized so that the win repays the chain.* Implemented in
+`backend/pm_martingale.py`, driven by `backend/data/pm_martingale_backtest.py`.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --from 2026-03-04 --to 2026-09-04
+python3 -m backend.data.pm_martingale_backtest --depth 2 --fee 0.02 --target 50
+python3 -m backend.data.pm_martingale_backtest --use-book --to 2026-07-27 --target 50
+python3 -m backend.data.pm_martingale_backtest --selftest     # ladder arithmetic
+```
+
+Each 5m window is a **separate** market that re-opens near 50/50, so unlike a
+martingale on a single position the ladder never has to buy an ever-worsening
+price. What it does have to buy is an ever-larger *size*, and that is where it
+dies — see capacity below.
+
+### The sizing, and why it isn't doubling
+
+Doubling ignores what a share actually pays. Each rung instead solves for the
+share count whose win repays everything already lost plus the chain's target:
+
+```
+breakeven(p) = p + fee * (1 - p)         # the hit rate a fill at p needs
+profit/share = 1 - breakeven(p) = (1 - p) * (1 - fee)
+shares_k     = (prior_loss + target) / (1 - breakeven(p_k))
+cost_k       = shares_k * p_k
+```
+
+`prior_loss` is the cash sunk in rungs 1..k-1, all of it lost. By construction a
+chain that wins at *any* rung banks exactly `target`, so depth changes only how
+often a chain closes green and how much a red one costs — which is the whole
+question. Rung 1 has `prior_loss = 0`, so the base stake floats with the price
+and the profit is what stays constant.
+
+Entries are the **real** book at a fixed `+5s` into the window (YES ask for UP,
+`1 - yes_bid` for DOWN — no hindsight, same offset every time), and outcomes are
+the market's own Chainlink resolution, never the Binance candle's direction.
+With `--use-book` each rung is sized against the **resting ladder** from
+`pm_l2_book` by fixed-point iteration, because size and fill price are mutually
+dependent: a bigger stake eats deeper, which raises the price, which demands
+more shares to recover the same loss.
+
+### Fitted depth: **2**
+
+RSI + BB *PM 5m Volume*, 2026-03-04 → 2026-09-04 (the last 6 months), 1,266
+signals against 52,423 resolved + quoted windows, `target` $1, fee 0, one chain
+at a time (signals firing mid-chain are skipped):
+
+| depth | chains | chain win | bets | bet hit | PnL | peak chain exposure | max DD | PnL/maxDD |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1,247 | 55.81% | 1,247 | 55.81% | **+53.06** | 4.00 | −25.60 | 2.07 |
+| **2** | 941 | 80.23% | 1,357 | 55.64% | **+89.85** | 12.33 | −41.62 | **2.16** |
+| 3 | 867 | 91.00% | 1,410 | 55.96% | **+96.74** | 27.06 | −74.77 | 1.29 |
+| 4 | 844 | 94.67% | 1,441 | 55.45% | −126.69 | 52.77 | −233.50 | −0.54 |
+| 5 | 836 | 97.01% | 1,464 | 55.40% | −257.58 | 124.05 | −471.47 | −0.55 |
+| 6 | 831 | 98.44% | 1,474 | 55.50% | −27.33 | 266.93 | −378.36 | −0.07 |
+
+The per-rung table is the mechanism. Each row conditions on every earlier rung
+having lost, and `breakeven` is just the price paid:
+
+| rung | bets | hit | avg fill | breakeven | edge | avg cost |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 831 | 55.84% | 0.5362 | 53.62% | **+2.22pp** | 1.23 |
+| 2 | 362 | **57.46%** | 0.5438 | 54.38% | **+3.08pp** | 2.74 |
+| 3 | 154 | 55.19% | 0.5573 | 55.73% | −0.54pp | 6.16 |
+| 4 | 69 | 42.03% | 0.5423 | 54.23% | −12.20pp | 13.21 |
+| 5 | 39 | 51.28% | 0.5528 | 55.28% | −4.00pp | 31.75 |
+| 6 | 19 | 63.16% | 0.5563 | 55.63% | +7.53pp | 80.15 |
+
+**Rung 2 is the only retry that earns.** It hits *better* than the signal itself
+— which is the same fact the Multi Horizon section reports from the other
+direction ([Why *not* to skip windows after a loss](#why-not-to-skip-windows-after-a-loss)):
+a loss means the stretch grew, so the next bet is stronger, and the run only
+ends when a bet finally wins. From rung 3 on, the fill price has crept up
+(0.5362 → 0.5573) while the hit rate has not, and the edge is gone. Rungs 5-6
+look positive again on 39 and 19 bets — that is noise, and the depth-6 PnL of
+−27 versus depth-5's −258 is the same noise seen from the P&L side.
+
+Depth 3 books the highest raw PnL, and it is **not** the pick:
+
+- **It is not a real improvement over 2.** In a paired weekly block bootstrap
+  (4,000 resamples), depth 2 beats depth 1 in **83.5%** of them; depth 3 beats
+  depth 2 in **55.2%** — a coin flip. Depth 2 also has the best 5th percentile
+  (−5.52 vs depth 3's −28.44) and the highest P(profit), 93.9% vs 89.3%.
+- **It dies first under fees.** At a 2% or 4% winnings fee, depth 2 is the top
+  depth outright; depth 3 falls behind, then negative.
+- **It needs 2.2x the capital** ($27.06 vs $12.33 peak exposure per $1 of
+  target) and 1.8x the drawdown for 8% more PnL.
+
+Depth ≥4 is not a milder version of the same thing — it is a different bet. It
+wins 95-99% of its chains and still loses money, because the rare bust now costs
+40-1,000x the target. Its sign flips on the entry offset alone (depth 5 is −258
+at +5s, +46 at +30s), which is the signature of a result carried by three or
+four chains.
+
+### Capacity: the edge is ~2 cents wide
+
+The whole edge is 2.2pp of hit rate, i.e. ~2c of price. Walking the real ladder
+for the shares each rung needs, mean slippage against the top-of-book price:
+
+| target | rung 1 | rung 2 | rung 3 | rung 4 | rung 5 |
+|---:|---:|---:|---:|---:|---:|
+| $1 | 0.00c | 0.00c | 0.04c | 0.17c | 0.17c |
+| $10 | 0.07c | 0.11c | 0.34c | 0.65c | 1.28c |
+| $100 | 0.62c | 1.07c | 2.67c | 4.70c | 10.68c |
+| $1,000 | 4.94c | 9.78c | 17.82c | 27.41c | 33.37c |
+
+Rung 3 at a $100 target slips 2.67c — *more than the entire edge*. Sized in
+`--use-book` mode (ladder span 2026-03-04 → 2026-07-27), PnL per $1 of target:
+
+| target | fee | D=1 | D=2 | D=3 | D=4 |
+|---:|---:|---:|---:|---:|---:|
+| $10 | 0% | 38.48 | **72.93** | 68.78 | −173.84 |
+| $10 | 2% | 27.67 | **57.57** | 47.09 | −215.50 |
+| $50 | 0% | 30.96 | **55.48** | 27.86 | −155.34 |
+| $50 | 2% | 19.86 | **39.10** | 3.67 | −217.01 |
+| $100 | 2% | 11.27 | **12.41** | −26.42 | −134.54 |
+| $250 | 0% | **4.22** | −1.66 | −57.36 | −91.02 |
+
+Depth 2 is best in every cell until size kills the whole scheme somewhere
+between a $100 and $250 chain target — at which point flat betting is the only
+thing still standing, and not for long.
+
+### Can the losing weeks be filtered out? Not as weeks.
+
+Nine of the 27 weeks are red, and they look like they ought to be predictable.
+They are not: they are indistinguishable from chance. Shuffling the 941 chain
+P&Ls across the same week sizes produces **9.9** red weeks on average against
+the 9 observed (p=0.82), and a weekly-P&L spread of 11.03 against the observed
+11.50 (p=0.37). The chi-square of weekly bust counts is 36.4 on 26 dof
+(dispersion 1.40, p≈0.09). There is no week-level structure to find, so no
+week-level rule can find one — and a week is only knowable as red once it is
+over anyway.
+
+The tradeable question is whether **individual bets** can be filtered, which
+shrinks the red weeks as a by-product. Ten features observable at entry were
+scanned — entry price, spread, best-ask size, 5c depth imbalance, RSI, %B,
+ATR%, hour, weekday, and whether the previous chain busted — each cut at its
+**H1 median**, then judged against a permutation null (a random filter keeping
+the same number of chains, 20,000 draws) and finally on an untouched H2:
+
+| filter (fitted on H1) | H2 chains | H2 PnL | vs random subset | H2 $/chain |
+|---|---:|---:|---:|---:|
+| *unfiltered* | 449 | +31.47 | — | +0.0701 |
+| **hour 13-23 UTC** | 194 | **+48.23** | p=0.043 | **+0.2486** |
+| skip after a bust | 390 | +35.83 | p=0.048 | +0.0919 |
+| RSI high | 225 | +43.30 | p=0.086 | +0.1925 |
+| everything else (7) | — | — | p=0.26-0.87 | — |
+
+Only the hour survives. *Skip after a bust* clears the permutation null on H1
+but collapses on H2 (+0.0919 vs a +0.0701 baseline) and actually **raises** the
+red-week count there, 6 → 7 — the same verdict the Multi Horizon section reaches
+at bar level in [Why *not* to skip windows after a loss](#why-not-to-skip-windows-after-a-loss).
+Entry price, spread, book depth, %B, ATR%, weekday and ask size are all noise.
+
+### The one filter that survives: trade the US session
+
+The effect is in the **signal**, not the ladder. At depth 1 — a plain flat bet,
+no martingale at all — the fill price barely moves between sessions but the hit
+rate does:
+
+| hours (UTC) | bets | hit | avg fill | edge |
+|---|---:|---:|---:|---:|
+| 00-12 | 681 | 54.19% | 0.5385 | **+0.33pp** |
+| 13-23 | 566 | **57.77%** | 0.5409 | **+3.69pp** |
+| all | 1,247 | 55.81% | 0.5396 | +1.85pp |
+
+**Essentially the entire edge is earned between 13:00 and 23:59 UTC.** The
+Asian and early-European sessions price the band fade correctly; the US session
+does not. The same cut lifts P&L per chain for **every** preset at **both**
+depths (8 of 8: +0.014 to +0.200), and the 16:00-19:59 and 20:00-23:59 blocks
+are the two that agree in sign across H1 and H2, so this is not one preset's
+accident.
+
+Applied to the depth-2 ladder over the full six months:
+
+| | unfiltered | hours 13-23 |
+|---|---:|---:|
+| chains | 941 | 430 |
+| PnL (target $1) | +89.85 | **+102.76** |
+| per chain | +0.0955 | **+0.2390** |
+| ROI on cash staked | +3.89% | **+10.44%** |
+| max drawdown | −41.62 | **−18.45** |
+| green weeks | 18/27 (67%) | **21/27 (78%)** |
+| worst week | −20.85 | **−5.30** |
+| worst chain | −9.74 | **−5.59** |
+
+More money on 54% fewer bets, less than half the drawdown, and no red week worse
+than −5.30. It does not eliminate losing weeks — six remain, and they cannot be
+eliminated, because they are chance. It makes them shallow.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --depth 2 --hours 13-23 --by week
+```
+
+Caveat on the filter specifically: the hour was one of ten features scanned, so
+some selection remains even though the cut itself was H1's median rather than a
+hand-picked boundary. What raises it above the other nine is that it reproduces
+out of sample, across presets, and at depth 1 — i.e. it is a property of when
+the strategy is right, not of the staking scheme.
+
+### Stoch Wick: the filter matters more than the ladder
+
+Same protocol, `stoch_wick` / *PM 5m Volume*, 1,605 signals over the same six
+months. It lands on the **same answer — depth 2, `--hours 16-01`** — but for a
+different reason, and the unfiltered version is not tradeable at all.
+
+Its raw edge is a quarter of RSI+BB's: rung 1 hits **53.87% at a 0.5327 fill**,
+`+0.60pp`, which a 2% winnings fee plus ladder slippage eats completely. Priced
+against the real book, **unfiltered Stoch Wick loses money at every depth and
+every size**: depth 1 is −1.24 per $1 of target at a $1 chain and −18.88 at
+$100. The session filter is what makes it a strategy:
+
+| hours (UTC) | rung-1 bets | hit | fill | edge |
+|---|---:|---:|---:|---:|
+| all | 1,318 | 53.87% | 0.5327 | +0.60pp |
+| **16-01** | 577 | **58.23%** | 0.5318 | **+5.05pp** |
+
+Hours **06:00-12:59 UTC are negative in both halves** (6, 7, 8, 10, 11, 12 all
+agree, 9 disagrees), and 16, 17, 19, 21, 23, 0 are positive in both. Dropping the
+morning is worth ~4.5pp of hit rate — a bigger lift than the same filter gives
+RSI+BB, on a strategy that has nothing without it.
+
+At `16-01`, depth 2 is again the pick:
+
+| depth | chains | PnL | max DD | peak capital | PnL/peak | PnL/maxDD | rung-N edge |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 632 | +92.06 | −13.86 | 4.88 | 18.86 | 6.64 | — |
+| **2** | 577 | **+145.83** | −17.80 | 7.42 | **19.65** | **8.19** | **+6.58pp** (235 bets) |
+| 3 | 559 | +156.62 | −38.10 | 29.46 | 5.32 | 4.11 | −2.16pp (91 bets) |
+| 4 | 549 | +265.85 | −51.56 | 38.39 | 6.92 | 5.16 | +11.10pp (43 bets) |
+| 5 | 545 | +116.44 | −130.29 | 72.81 | 1.60 | 0.89 | −22.60pp (15 bets) |
+
+**23/27 green weeks (85%)**, the best of anything measured here, worst week
+−7.05.
+
+**Depth 4 is a trap worth documenting.** It books nearly twice depth 2's P&L and
+beats it in 96% of paired weekly resamples, because rung 4 hits 65-66% — and
+that survives a time-shift null decisively (400 random placements of the same
+signal pattern average a 51.5% rung-4 hit and −104 P&L; the real run gets 66%
+and +385, p<0.0025). It is still not usable:
+
+- **The ladder is not monotone.** Rung 3 *loses* (−2.16pp) and rung 4 makes it
+  back. A real conditional edge does not skip a rung.
+- **It is the outlier of nine.** Rung-4 edge across the nine PM-preset
+  strategies runs −12.2 to +12.4pp with a mean near +0.6pp on 30-140 bets each;
+  Stoch Wick is simply the maximum of that spread. RSI+BB's rung 4 is −12.2pp.
+- **The market-wide effect is far too small to explain it.** Across all 52,440
+  windows, P(revert) after k consecutive same-direction windows is 50.5-51.5%
+  (k=3: 51.46%, z=+3.26) — real, but nowhere near the ~54% breakeven, let alone 66%.
+- **43 bets** at `16-01`.
+
+So the honest reading is that rung 4 is a genuine feature *of this sample* and
+not of the market. Depth 2's rung 2 (+6.58pp on 235 bets, monotone with rung 1's
++5.05pp) is the one to trade.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy stoch_wick \
+    --preset "PM 5m Volume" --depth 2 --hours 16-01 --by week
+```
+
+### Zscore MS: the first strategy where the ladder does *not* pay
+
+Same protocol, `zscore_ms` / *PM 5m Volume*, 1,381 signals. The answer is
+**depth 1 — no martingale — with `--hours 13-18`**, and the reason is worth more
+than the number.
+
+Unfiltered, this strategy has essentially nothing at rung 1: `+0.44pp`, and it
+does not replicate (H1 `+1.49pp`, H2 `-0.94pp`). Everything it earns unfiltered
+comes from rung 2 (`+2.97 / +4.61pp`, agreeing across halves on 204/234 bets),
+with rung 3 negative in both halves. Priced against the real ladder at a 2% fee,
+the unfiltered strategy tops out at **+$1,040** at any depth or size.
+
+The hour structure is real but sits **earlier** than the other two strategies.
+Ranking all 1,371 (depth x contiguous-session) combos by whether they are
+positive in *both* halves, the share of survivors containing each hour is a
+smooth single-peaked curve — 23-26% at 04:00-07:00 UTC rising to 63-66% at
+15:00-19:00. That smoothness is what a real session effect looks like; a spiky
+profile would not be.
+
+Inside `13-18`, **the signal itself is strong enough that the retry has little
+left to capture**:
+
+| session | depth | chains | PnL | max DD | PnL/maxDD | per-rung edge |
+|---|---:|---:|---:|---:|---:|---|
+| none | 2 | 1,025 | +54.01 | −59.12 | 0.91 | r1 +0.0 (1025), r2 +2.6 (471) |
+| **13-18** | **1** | **302** | **+46.49** | **−10.09** | **4.61** | **r1 +7.5pp (302)** |
+| 13-18 | 2 | 242 | +54.38 | −14.54 | 3.74 | r1 +7.9 (242), r2 +2.4 (90) |
+| 13-18 | 3 | 230 | +83.56 | −20.90 | 4.00 | r1 +8.1, r2 +2.4, r3 +12.3 (36) |
+| 15-01 | 3 | 426 | +184.97 | −32.68 | 5.66 | r1 +1.8, r2 +6.6, r3 +10.6 (74) |
+
+Rung 1 at `13-18` hits **60.26% at a 0.5278 fill** — the strongest single-rung
+edge of the three strategies documented here — and rung 2 adds only `+2.4pp` on
+top. `13-18` is not a knife edge: every neighbouring session (12-18, 13-17,
+13-19, 13-20, 14-18, 14-19, 15-19, 12-19, 13-21) is positive at both depths with
+rung-1 edges of +2.6 to +9.2pp.
+
+The decision is made by **matched capital**, priced against the real ladder at a
+2% fee:
+
+| combo | best target | PnL | peak capital | PnL per $ capital | PnL/maxDD |
+|---|---:|---:|---:|---:|---:|
+| **13-18 D=1** | $600 | **+17,696** | 2,360 | **7.50** | **2.21** |
+| 13-18 D=2 | $250 | +7,459 | 2,437 | 3.06 | 1.62 |
+| 15-01 D=3 | $400 | +21,822 | 8,555 | 2.55 | 1.11 |
+| none D=2 | $50 | +1,040 | 490 | 2.12 | 0.39 |
+
+At essentially the **same capital** ($2,360 vs $2,437), flat betting makes
+**2.4x** what depth 2 makes. Depth 3 at `15-01` books the most money in absolute
+terms — and wins a paired weekly bootstrap against `13-18 D=1` in 99.9% of
+resamples — but needs 3.6x the capital and gives back nearly its whole profit in
+its worst drawdown (PnL/maxDD 1.11).
+
+**The general lesson across the three strategies:** the ladder is a *substitute*
+for signal quality, not a complement. Where a filter finds hours in which the
+signal is genuinely good (Zscore MS at 13-18, rung 1 `+7.5pp`), the retry adds
+almost nothing and costs capital. Where the signal is mediocre (Stoch Wick
+unfiltered `+0.60pp`, Zscore MS at 15-01 `+1.8pp`), rungs 2-3 are what earn.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy zscore_ms \
+    --preset "PM 5m Volume" --depth 1 --hours 13-18 --by week
+```
+
+### Volume Exhaustion: a strategy that needs neither a ladder nor a filter
+
+`volume_exhaustion` / *PM 5m Selective*, 1,539 signals, same six months. The
+answer is **depth 1 and no entry filter** — and it is the best raw signal of the
+four measured here, which is exactly why nothing bolted onto it helps.
+
+| depth | chains | PnL | max DD | peak capital | PnL/peak | per-rung edge |
+|---:|---:|---:|---:|---:|---:|---|
+| **1** | 1,518 | **+134.17** | **−21.59** | 6.14 | **21.9** | **r1 +4.4pp (1,518)** |
+| 2 | 1,308 | +139.90 | −28.17 | 14.08 | 9.9 | r1 +4.2, r2 **+0.9** (550) |
+| 3 | 1,242 | +83.93 | −83.12 | 24.45 | 3.4 | r3 −2.3 (231) |
+| 4 | 1,215 | −1.34 | −115.83 | 58.29 | −0.0 | r4 −3.1 (108) |
+
+Rung 2 is worth `+0.9pp` on 550 bets. Depth 2 buys 4% more P&L for 2.3x the
+capital and 1.3x the drawdown; priced against the real ladder at a 2% fee it is
+worse in absolute terms too — **+$11,601** at depth 1 (peak capital $1,031,
+11.26 per $ of capital) against **+$3,624** at depth 2. Depth 3 is negative.
+
+**The filter search, run as widely as the data allows.** 364 candidate
+predicates over twelve feature families — `rel_vol`, `vol_rank`, `atr_pct`,
+book `spread`, `ask_sz`, `bid_sz`, 5c depth imbalance, the entry fill price,
+`climax`, `mode`, every contiguous UTC session of 6-24h, and weekday — plus
+skip-after-bust. Each family's best cut was fitted on H1 and then judged on H2
+against a permutation null:
+
+| best H1 cut | H1 PnL | H2 chains | H2 PnL | p |
+|---|---:|---:|---:|---:|
+| *(no filter)* | +87.18 | 743 | **+46.98** | — |
+| vol_rank ≤ 99.2 | +68.89 | 593 | +59.73 | 0.036 |
+| hour in 09-02 (18h) | +78.42 | 568 | +42.17 | 0.302 |
+| bid_sz ≤ 127.75 | +90.91 | 150 | +15.13 | 0.329 |
+| atr_pct ≤ 0.19 | +60.37 | 563 | +46.81 | 0.207 |
+| climax == down | +63.49 | 348 | +11.34 | 0.755 |
+| fill ≥ 0.51 | +69.50 | 478 | +17.80 | 0.803 |
+| spread ≤ 0.01 | +86.26 | 417 | +7.20 | 0.893 |
+| weekday in Mon-Fri | +45.35 | 588 | +16.54 | 0.955 |
+| rel_vol ≥ 3.14 | +70.88 | 531 | +9.36 | 0.961 |
+| ask_sz ≤ 333.06 | +77.02 | 269 | −19.94 | 0.994 |
+| depth_imb ≥ −0.30 | +58.39 | 366 | −19.03 | 0.998 |
+
+One of twelve clears p<0.05 — which is what twelve tests give you for free, and
+Bonferroni puts it at 0.43. It is also **not monotone**: binning `vol_rank`, the
+rung-1 edge runs +6.34/+7.39pp (90-96), +4.09/+3.97 (96-98.5), +0.10/+3.10
+(98.5-99.2), then +9.85/−2.47 (99.2-99.7, the only band whose halves disagree)
+and +2.78/+2.01 (99.7+). The cut earns by slicing exactly at the disagreeing
+band, so it is a lucky boundary rather than a mechanism.
+
+**There is no session effect here at all.** Ranking all 1,299 depth x session
+combos by whether both halves are positive, hour-inclusion among the survivors
+is flat at **72-83% across all 24 hours** — against Zscore MS's 23% → 66% swing.
+And 75% of every combo tested is positive in both halves, versus ~25% by chance:
+this strategy is broadly robust, which is the same fact as "no filter finds
+anything".
+
+**Stacking makes it worse, measurably.** Greedy forward selection on H1 P&L per
+chain adds four filters and lifts H1 from +0.1125 to +0.5179 per chain — while
+H2 *total* P&L falls from **+46.98 to +8.50** on 51 surviving chains. Re-running
+the greedy on H1 *total* P&L with a nested gate (the filter must also help both
+halves of H1) picks one filter, `bid_sz ≤ 127.75`, which then fails on H2
+(+15.13). The H1-selected filter loses and the H1-rejected one wins: at this
+signal-to-noise, selection is close to anti-informative.
+
+Weekly at depth 1: **20/27 green (74%)**, worst week −6.64, max drawdown −21.59.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest \
+    --strategy volume_exhaustion --preset "PM 5m Selective" --depth 1 --by week
+```
+
+### Jump Exhaustion: an overnight strategy, and exactly one filter
+
+`jump_exhaustion` / *PM 5m Volume - 2yr Train*, 2,380 signals. The answer is
+**depth 1 with `--hours 17-06`** — and the session it wants is the **opposite**
+of the one RSI + BB and Stoch Wick want.
+
+Ranking all 1,299 depth x session combos by whether both halves are positive,
+hour-inclusion among the survivors is a clean **inverted bowl**: 83-85% at
+22:00-01:00 UTC falling to 41-44% at 12:00-14:00. This strategy fades overshoots,
+and overshoots revert in thin overnight tape while US-hours jumps are news-driven
+and keep going. Every overnight session tested is positive in both halves.
+
+The filter is doing something specific: **it repairs the second half.**
+Unfiltered, the strategy decays badly across the sample — H1 +0.0939 per chain,
+H2 **+0.0167**. Inside `17-06` it is +0.1282 / +0.1021, i.e. H2 recovers six-fold
+while H1 barely moves.
+
+| session | depth | chains | PnL | max DD | peak capital | PnL/peak | H1 /ch | H2 /ch |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| all | 1 | 2,344 | +127.48 | −30.34 | 4.00 | 31.9 | +0.0939 | +0.0167 |
+| all | 2 | 1,810 | +140.57 | −64.57 | 12.33 | 11.4 | +0.1680 | **−0.0101** |
+| all | 3 | 1,630 | +335.77 | −62.97 | 27.06 | 12.4 | +0.3572 | +0.0548 |
+| **17-06** | **1** | **1,084** | **+124.55** | **−17.02** | 4.00 | **31.1** | **+0.1282** | **+0.1021** |
+| 17-06 | 3 | 775 | +263.96 | −50.30 | 20.45 | 12.9 | +0.4412 | +0.2402 |
+| 19-04 | 1 | 753 | +99.42 | −16.35 | 4.00 | 24.9 | +0.1243 | +0.1401 |
+
+**Depth stays at 1**, and the ladder is the usual mirage. Rung 2 does *not*
+replicate (+6.16pp on H1, **−3.62pp** on H2 — unfiltered depth 2 is outright
+negative in the second half); rung 3 does (+7.42 / +4.23) and rungs 5-6 look
+superb on 8-30 bets a half. Priced against the real ladder at a 2% fee, depth
+wins on paper and loses in practice:
+
+| combo | best target | PnL | peak capital | PnL per $ capital | PnL/maxDD |
+|---|---:|---:|---:|---:|---:|
+| **17-06 D1** | $400 | **+17,999** | 1,728 | **10.42** | **2.13** |
+| 19-04 D1 | $400 | +14,978 | 1,724 | 8.69 | 1.62 |
+| 17-06 D3 | $100 | +13,405 | 2,504 | 5.35 | 2.27 |
+| all D3 | $100 | +10,293 | 4,023 | 2.56 | 1.00 |
+| all D1 | $175 | +5,676 | 850 | 6.68 | 0.65 |
+| 19-04 D2 | $175 | +4,232 | 2,951 | 1.43 | 0.52 |
+
+Depth 3 books more than depth 1 at a $1 target and less than half as much once
+it has to buy real size — it cannot run past a $100 chain target before the
+ladder eats the edge, while depth 1 runs to $400.
+
+**How many filters survive: one.** 367 candidate predicates over ten feature
+families (`jump_atr`, `atr_pct`, `rsi`, `close_pos`, book spread, `ask_sz`,
+`bid_sz`, depth imbalance, fill price, side) plus every contiguous session and
+weekday. Fitted on H1 and judged on H2, none beat the unfiltered baseline. More
+tellingly, adding a **second** filter on top of `19-04` makes things worse in
+every one of nine families — the session alone scores +51.43 on H2, the best
+stacked variant +44.45, the rest +17.65 to +32.77, all with p between 0.275 and
+0.853. Greedy stacking on H1 total P&L picks `bid_sz ≤ 353.2`, which then
+delivers +4.71 on H2 against the baseline's +20.03.
+
+> **A methodology trap worth naming.** `close_pos >= 0.0` came out of the scan at
+> p=0.000 — because `close_pos` is never negative, so the "filter" keeps every
+> chain and its permutation null compares a set against itself; the p-value is
+> pure floating-point noise in the summation order. Any filter whose kept-count
+> equals the unfiltered count is a no-op and must be dropped before scoring, not
+> after.
+
+Weekly at depth 1 / `17-06`: **20/27 green (74%)**, worst week −9.58, max
+drawdown −17.02, ending at +124.55.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy jump_exhaustion \
+    --preset "PM 5m Volume - 2yr Train" --depth 1 --hours 17-06 --by week
+```
+
+### CCI Williams: the session filter carries the whole strategy
+
+**Answer: depth 1, `--hours 16-01`, and no other entry filter.** Over
+2026-03-04 .. 2026-09-04 on the `PM 5m Selective` preset, 1,536 signals land on a
+resolved window.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy cci_williams \
+    --preset "PM 5m Selective" --depth 1 --hours 16-01 --by week
+```
+
+Unfiltered, **no depth is positive in both halves** — the whole apparent edge
+sits before the 2026-06-04 split:
+
+| depth | chains | PnL | maxDD | PnL/$cap | H1 /ch | H2 /ch |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1,536 | +51.31 | −51.53 | 12.0 | +0.0764 | **−0.0061** |
+| 2 | 1,254 | +101.38 | −55.55 | 10.4 | +0.2061 | **−0.0351** |
+| 3 | 1,169 | −112.82 | −228.88 | −4.2 | +0.0654 | **−0.2485** |
+
+Ranking a session x depth grid by raw per-chain P&L puts *depth 5* on top, with
+rows reading `+1.0000` per chain and a max drawdown of −1.70. That is the
+martingale illusion in its purest form: a chain that always wins banks exactly
+the target, so per-chain P&L converges on the target and says nothing about
+edge. The tell is the capital — those rows need $65-126 of peak exposure to
+earn $1 a chain (PnL/$cap 1.6-3.2) against depth 1's 19.5. **Median PnL per $ of
+peak capital by depth: D1 19.5, D2 13.2, D3 2.5, D4 2.0, D5 1.6.**
+
+**The session effect here is real, and it is the only thing that is.** Across
+484 depth-1 sessions the H1->H2 Spearman rank correlation is **+0.762**, 20/20
+of the top-20 H1 sessions stay positive in H2, and choosing on H1 alone by
+capital efficiency lands on a session worth +0.0916/chain in H2 against the
+unfiltered −0.0061. Rotating the session around the clock at fixed width gives a
+smooth profile — every rotation from `09-22` to `15-04` positive, every one from
+`00-13` to `03-16` negative — so it is a diurnal effect, not one lucky bin
+(rank 2/24, p = 0.083).
+
+The boundary itself is **not finely determined**: `14-01`, `15-01`, `16-01` and
+`17-01` are statistically indistinguishable on H1 (best worst-quarter +0.3529 to
++0.4002). `16-01` is used because it wins the priced test at every matched
+target and matches the session RSI + BB and Stoch Wick already trade.
+
+**367 predicates over 13 families, and none of them survive.** The honest test
+is choosing on H1 and reading H2:
+
+| | depth 1 | depth 2 |
+|---|---|---|
+| chosen by H1 total P&L | −0.0173/ch — **loses** to unfiltered | −0.0560/ch — **loses** |
+| top-25 by H1, mean H2 | +0.0289 (**87% shrinkage**) | +0.0563 (**87%**) |
+| Spearman H1->H2 | **+0.150** | +0.374 |
+
+Compare the session's +0.762. And the decisive diagnostic: **9 of 13 families
+have *both* tails beating the baseline** — `atr_pct <=` and `atr_pct >=`, `fav
+<=` and `fav >=`, `imb` in both directions. A family that agrees with itself
+carries information; a family where either tail "works" is measuring the act of
+subsetting a slightly-negative baseline. Stacked on top of the session,
+**0/13 families improve on it**, every one costing between −5.66 and −49.83 of
+H2 P&L.
+
+Two constant-feature traps were caught by the no-op guard rather than scored:
+`mode == reversion` (the preset only emits reversion signals) and
+`wr_edge >= 0` (a distance is never negative). Both keep 100% of chains, so a
+permutation null compares a set with itself — the `close_pos >= 0` artifact
+again, now guarded for.
+
+**Depth 1, twice over.** Rung 2 does not replicate — 69.1% in H1 against
+**50.9% in H2**, a coin flip — and rung 3 runs 33.3% / 46.8%. Priced against the
+real ladder with a 2% winnings fee, depth 1 dominates depth 2 at *every* matched
+target (PnL/$cap 25.1 vs 18.8 at a $1 target, 22.1 vs 15.0 at $200, 15.5 vs 7.6
+at $600), so there is no capital level at which the retry is the better bet.
+
+| 16-01, depth 1 | PnL | peak capital | PnL/$cap | PnL/maxDD |
+|---|---:|---:|---:|---:|
+| $200 target | +16,815 | 724 | 23.24 | 6.54 |
+| $400 target | +30,054 | 1,591 | 18.89 | 5.58 |
+| **$600 target** | **+42,540** | **2,494** | **17.06** | **5.05** |
+| $800 target | +42,692 | 3,691 | 11.57 | 3.63 |
+
+Unfiltered at the same targets the strategy is not merely worse but *negative*:
+−3,290 at $200 and −48,177 at $600. The filter is not an improvement here — it
+is the difference between a business and a loss.
+
+At the $1 unit target over the full six months: **560 chains, +117.13, maxDD
+−11.67, 31.1x peak capital, 62.7% hit rate, 24/27 green weeks (89%)**, worst
+week −4.55.
+
+*(The scan tables above are computed on the 1,536 signals that land on a
+resolved window; the engine is also handed the 27 that do not, where it opens a
+chain and aborts it. An aborted chain earns nothing but still shifts which later
+signals are blocked, which is why the page reports 560 chains and +117.13 where
+the scan reports 555 and +114.13. The page's figure is the one to trade on.)*
+
+### Multi Horizon: the one that does not clear the bar
+
+**Answer: depth 1, and no entry filter — including no session filter.** On the
+`PM 5m Volume` preset over 2026-03-04 .. 2026-09-04 (1,228 signals on a resolved
+window) this strategy does not survive its own holdout, and the honest
+recommendation is not to trade it on this preset. The depth question has a clean
+answer; the filter question has a *negative* one, and that is the finding.
+
+**Depth 1, unambiguously.** No depth is positive in both halves, and the
+capital ranking is the most lopsided of any strategy measured — median PnL per $
+of peak capital among both-halves-positive combos: **D1 15.0, D2 3.9, D3 2.2,
+D4 1.3, D5 1.0.** Rung 2 goes 59.7% in H1 to **46.4% in H2**. (Depth 7 shows up
+"positive in both halves" in the raw scan; depth 8 on the same signals flips to
+−0.5604/chain, which is what a 3-chain artifact looks like.)
+
+| depth | chains | PnL | maxDD | PnL/$cap | H1 /ch | H2 /ch |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1,228 | +66.77 | −41.63 | 16.7 | +0.1174 | **−0.0028** |
+| 2 | 1,007 | +66.52 | −86.62 | 5.4 | +0.2339 | **−0.0844** |
+| 3 | 937 | +31.90 | −124.73 | 1.2 | +0.1904 | **−0.1111** |
+
+**The session filter looks real by every screen except the one that matters.**
+The H1->H2 Spearman across 461 depth-1 sessions is **+0.732** — as high as CCI
+Williams' +0.762 — and 20/20 of the top-20 H1 sessions stay positive in H2 at
+only 40% shrinkage. But the effect size is negligible and the placement is
+arbitrary:
+
+* Choosing on H1 sub-blocks alone picks `16-09`, worth **+0.0087/chain** on H2
+  (+3.69 across the entire second half) against an unfiltered −0.0028.
+* The **time-shift null kills it**: rotating an 18-hour window around the clock,
+  `16-09` ranks **12/24, p = 0.500** — dead median. CCI Williams' session ranked
+  2/24 with a smooth diurnal profile. Here there is no profile to speak of; hour
+  inclusion among both-halves survivors spans only 14.9%-26.8% (CCI Williams:
+  5%-31%).
+* The sessions that *price* best, `15-01` and `14-01`, rank **148/424** and
+  **89/424** on the H1 criterion. Their good numbers are hindsight, not a rule
+  anyone could have followed.
+
+**585 predicates over 20 families, none survive**, and this time the failure is
+not subtle — the top-25 by H1 average *negative* on H2:
+
+| | depth 1 | depth 2 |
+|---|---|---|
+| chosen by H1 total P&L | −0.1060/ch — **loses** to unfiltered | −0.1361/ch — **loses** |
+| top-25 by H1, mean H2 | −0.0360 (**113% shrinkage**) | −0.0948 (**120%**) |
+| Spearman H1->H2 | +0.153 | +0.162 |
+| families with BOTH tails beating baseline | 11 of 20 | — |
+
+Priced against the real ladder with a 2% fee, the honestly-selectable
+configuration is not tradeable:
+
+| | PnL | peak capital | PnL/$cap | **PnL/maxDD** |
+|---|---:|---:|---:|---:|
+| `16-09` D1 @ $400 (H1-chosen) | +4,909 | 1,515 | 3.24 | **0.36** |
+| unfiltered D1 @ $100 | +1,403 | 436 | 3.22 | **0.28** |
+| `15-01` D1 @ $400 (hindsight) | +10,107 | 1,484 | 6.81 | 1.52 |
+| *CCI Williams `16-01` D1 @ $600, for scale* | *+42,540* | *2,494* | *17.06* | *5.05* |
+
+A drawdown roughly three times the profit. The month table says why — this is
+decay, not a bad filter:
+
+| | Mar | Apr | May | Jun | Jul | Aug |
+|---|---:|---:|---:|---:|---:|---:|
+| unfiltered /chain | +0.2193 | +0.0939 | +0.0925 | −0.0320 | −0.0883 | +0.0689 |
+| `16-09` /chain | +0.1599 | +0.0847 | +0.2148 | +0.1181 | −0.0860 | −0.0018 |
+
+The filter tracks the decay rather than escaping it. **Not added to the page** —
+a playbook is a measured configuration worth trading, and this is a measured
+configuration worth skipping. Kept here because a negative result found by the
+same procedure is what makes the positive ones credible.
+
+### Candlesticks: one pattern, one session, no ladder
+
+**Answer: depth 1, `--hours 16-02`, no other entry filter.** On `PM 5m Balanced`
+over 2026-03-04 .. 2026-09-04, 1,070 signals land on a resolved window.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy candlesticks \
+    --preset "PM 5m Balanced" --depth 1 --hours 16-02 --by week
+```
+
+**Read the preset before scanning it.** The strategy advertises nine pattern
+families; on this preset `patterns` is `['pat_marubozu']` on all 1,070 signals
+and `mode` is always `fade`. So "which pattern fired" is not a filter here, it is
+a constant — and the no-op guard caught 14 such predicates before scoring,
+including `has_pat_marubozu == True`, `mode == fade`, `body_ratio <= 1`,
+`pattern_dir <= 1`, `pattern_dir >= -1` and `weekday >= 0`.
+
+Depth 1 and depth 2 are both positive in both halves — the first strategy
+measured where the unfiltered baseline survives its own holdout — but the ladder
+still does not pay:
+
+| depth | chains | PnL | maxDD | PnL/$cap | H1 /ch | H2 /ch |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1,070 | +84.96 | −38.04 | **23.9** | +0.1406 | +0.0241 |
+| 2 | 1,020 | +82.14 | −70.82 | 9.0 | +0.1623 | +0.0049 |
+| 3 | 988 | −36.93 | −122.19 | −1.4 | +0.0078 | −0.0789 |
+
+Rung 2 goes 60.0% in H1 to **45.1% in H2**, and priced against the real ladder
+depth 1 dominates at *every* matched target (PnL/$cap 12.5 vs 5.2 vs 2.7 vs 2.0
+at a $1 target; 5.6 vs 2.2 vs 0.5 vs 0.8 at $600).
+
+**The session is the real find, and it is the strongest one measured.** Rotating
+the 11-hour window around the clock, `16-02` ranks **1/24, p = 0.042** — the best
+of every rotation — and the profile is smooth: every window from `12-22` to
+`19-05` positive, every one from `01-11` to `06-16` negative. Choosing on H1
+sub-blocks alone, **8/8** of the top sessions beat the unfiltered baseline on H2.
+The band `16-02` .. `20-02` is statistically tied on H1; `16-02` is named because
+it is the widest of the tied set and therefore the least boundary-fitted.
+
+| | PnL | peak capital | PnL/$cap | PnL/maxDD |
+|---|---:|---:|---:|---:|
+| $200 target | +9,913 | 912 | **10.86** | **4.95** |
+| $400 target | +16,663 | 2,474 | 6.73 | 4.00 |
+| $600 target | +19,478 | 2,950 | 6.60 | 2.92 |
+| unfiltered D1 @ $150 | +3,509 | 705 | 4.98 | 0.49 |
+
+**466 predicates over 16 families, none survive.** 74% shrinkage, Spearman
+H1->H2 of only **+0.079**, and 8 of 16 families have both tails beating the
+baseline. Fitting by H1 total P&L or by H1 capital efficiency both *lose* to
+unfiltered. Stacked on the session, 1/6 families improve — chance.
+
+At the $1 unit target: **414 chains, +78.95, maxDD −12.65, 22.2x peak capital,
+62.1% hit rate, 20/27 green weeks (74%)**, worst week −5.78.
+
+### Reversal: the one that has not decayed
+
+**Answer: depth 1, `--hours 14-00`, no other entry filter.** On
+`PM 5m BOS Balanced` over the same range, 1,271 signals land on a resolved
+window.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy reversal \
+    --preset "PM 5m BOS Balanced" --depth 1 --hours 14-00 --by week
+```
+
+This preset pins the detector too: `vote_count`, `required` and
+`detectors_enabled` are all constant at 1 and `votes` is a single BOS vote
+collinear with the side, so its only strategy-side numeric feature is
+`atr_pct`. Everything else scanned is market-side.
+
+**It is the only strategy measured whose second half is better than its first.**
+Unfiltered depth 1 runs +0.0401/chain in H1 against **+0.0721 in H2**; every
+depth from 1 to 8 is positive in both halves, 80% of session x depth combos
+survive the both-halves test (against 24% for CCI Williams), and the top-20
+sessions by H1 show **−4% shrinkage** — H2 slightly better than H1. Month by
+month inside the session there is no trend to speak of: +0.284, +0.150, +0.193,
++0.129, +0.213, +0.173 from March to August.
+
+**Depth 1 anyway.** Rung 2 here does *not* collapse — it goes 51.1% in H1 to
+57.1% in H2, the only strategy where the retry improves out of sample — and yet
+depth 1 still wins at every matched capital level, because the ladder's cost
+grows faster than its hit rate:
+
+| target | D1 | D2 | D3 | D4 |
+|---:|---:|---:|---:|---:|
+| $1 | **26.7x** | 9.0x | 2.0x | 1.1x |
+| $200 | **21.3x** | 7.7x | 1.3x | 0.8x |
+| $800 | **11.4x** | 4.9x | −0.1x | 0.7x |
+
+The session ranks **2/24 (p = 0.083)** in the time-shift null with a smooth
+profile, 8/8 H1-chosen sessions beat the baseline on H2, and **0/10 families
+improve** when stacked on top of it. The `13-00` .. `15-23` band is tied on H1;
+`14-00` sits mid-band with 569 chains.
+
+**316 predicates over 14 families, none survive** — and here the failure is
+unusually clean: the Spearman correlation between a predicate's H1 rank and its
+H2 rank is **negative** at both depths (−0.153 at D1, −0.240 at D2). Fitting a
+filter on the first half actively anti-predicts the second.
+
+| | PnL | peak capital | PnL/$cap | PnL/maxDD |
+|---|---:|---:|---:|---:|
+| $200 target | +13,922 | 572 | **24.36** | **5.82** |
+| $400 target | +24,278 | 1,239 | 19.59 | 4.83 |
+| $600 target | +31,741 | 2,018 | 15.73 | 4.00 |
+| $800 target | +35,059 | 2,830 | 12.39 | 3.15 |
+
+That is the best capital efficiency of any strategy measured — 15.73 per dollar
+at a $600 chain target against CCI Williams' 17.06 at the same target on half
+the capital, and 24.36 at $200.
+
+At the $1 unit target: **569 chains, +95.57, maxDD −10.80, 33.5x peak capital,
+60.6% hit rate, 19/27 green weeks (70%)**, worst week −4.98.
+
+### Harmonic Patterns: the first strategy that actually wants a ladder
+
+**Answer: depth 3, `--hours 14-17`, no other entry filter.** On `PM 5m Volume`
+over 2026-03-04 .. 2026-09-04, 2,501 signals land on a resolved window — the
+largest sample of any strategy measured, and the only one whose answer is not
+depth 1.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --strategy harmonic \
+    --preset "PM 5m Volume" --depth 3 --hours 14-17 --by week
+```
+
+**Rung 1 is a coin flip; rungs 2 and 3 are the edge.** Unfiltered, the per-rung
+hit rates replicate across the holdout *and improve monotonically*, at an
+essentially constant fill price — the recovery mechanism working exactly as the
+design intends, and the first clean instance of it since RSI + BB:
+
+| rung | H1 hit @ fill | H2 hit @ fill | bets H1/H2 |
+|---|---|---|---|
+| 1 | 53.7% @ 0.538 | 52.5% @ 0.526 | 1163 / 1051 |
+| 2 | **54.9%** @ 0.534 | **55.5%** @ 0.530 | 523 / 499 |
+| 3 | **55.4%** @ 0.537 | **55.9%** @ 0.533 | 233 / 222 |
+| 4 | 54.6% @ 0.549 | 44.8% @ 0.526 | 97 / 96 |
+
+Rung 1 sits at breakeven (~53% at a 0.53 fill); rungs 2 and 3 clear it by 1.3-2.6
+points in *both* halves; rung 4 disagrees with itself and stops the ladder. A
+loss means price has pushed further past the projected completion zone, so the
+next bet is a better one — which is why depth 3, not depth 1, is the answer here.
+
+Depth 3 dominates at every matched capital level inside the session:
+
+| target | D1 | D2 | **D3** | D4 | D5 |
+|---:|---:|---:|---:|---:|---:|
+| $1 | 2.2x | 6.6x | **7.9x** | 3.6x | 1.5x |
+| $200 | 0.4x | 4.6x | **6.9x** | 2.2x | 1.0x |
+| $600 | −3.0x | 1.4x | **6.6x** | 2.1x | 1.4x |
+
+**The session is not optional — and it only exists at depth 3.** Unfiltered,
+priced against the real ladder with a 2% fee, the strategy is destroyed by its
+own size: +139 at a $10 target, −703 at $50, **−227,257 at $800**. Inside
+`14-17` the same depth 3 makes **+67,423** at a $600 target (peak capital
+10,158, PnL/$cap 6.64, PnL/maxDD 4.08); the $200 target is the efficient point
+at 6.92x on 3,305 of capital. In the time-shift null `14-17` ranks **1/24,
+p = 0.042** at depth 3 — but **10/24 (p = 0.417)** at depth 1 and **12/24
+(p = 0.500)** at depth 2. The session and the ladder are not two independent
+findings here; the hours only matter once you are running rungs in them.
+
+**637 predicates over 28 families, and the failure is total**: all *six*
+H1-fitting criteria lose to unfiltered at both depths, the H1->H2 Spearman
+across predicates is **negative** at both (−0.036, −0.063), shrinkage is 87% and
+101%, and 15 of 28 families have both tails beating the baseline.
+
+That includes the one filter this strategy seems designed for. Per pattern at
+depth 3, only three of seven families are positive in both halves — AB=CD
+(+0.1253/+0.0420), Crab (+0.1516/+0.4903), Shark (+0.2480/+0.0640) — while
+Gartley, Bat, Cypher and Butterfly are not. But "trade only the Crab" is not a
+rule the data supports, because it is not one the data would have *told* you:
+fitting the pattern on H1 alone picks **Shark** at depth 2 (H1 +0.1043 -> H2
+−0.0582) and **Cypher** at depth 3 (H1 +0.4781 -> H2 −0.1369), losing to
+unfiltered by 0.12 and 0.26 per chain. Crab's H1 rank is fourth of seven.
+
+(This was originally rejected on the weaker grounds that the pattern predicates
+beat the baseline 7 times in 13 — "chance". That reasoning is sound for a
+7-valued field but *not* for a binary one, as the CHoCH section below explains,
+so the claim is re-verified here by direct holdout instead.)
+
+**Two traps this strategy sets.** `prz_lo` and `prz_hi` are absolute BTC prices:
+a threshold on them ("only above $70k") is a *date* filter over a trending
+six-month window, so they are dropped and only the scale-free
+`prz_width_pct` is scanned. And `bias` is perfectly collinear with `side_up`
+(bullish <-> up on all 2,501 signals), so it is a duplicate family rather than an
+independent one. The no-op guard separately caught 10 predicates including
+`patterns_n >= 1`, `bars_c_to_d >= 3` and `hour >= 0`.
+
+At the $1 unit target: **338 chains, +168.76, maxDD −22.43, 10.6x peak capital,
+93.5% chain win rate, 23/27 green weeks (85%)**, worst week −10.80. The session
+is positive in every month but June.
+
+*One caveat on the sizing.* Inside `14-17` the rung-2 hit rate does **not**
+replicate (65.0% H1 against 52.2% H2) — that slice carries only 69-80 rung-2
+bets per half. The evidence that rungs 2 and 3 earn is the unfiltered table
+above, on 499-539 and 222-233 bets; the session is what makes those rungs
+affordable, not what makes them work.
+
+### CHoCH: the half the strategy is named after loses money
+
+**Answer: depth 2, filtered to `event == BOS`, and no session filter.** On
+`PM 5m Volume` over 2026-03-04 .. 2026-09-04, 1,614 signals land on a resolved
+window. This is the only strategy whose surviving filter is *categorical* rather
+than a session, and the only one where the two halves of its own signal
+definition behave completely differently.
+
+| subset | D | chains | PnL | maxDD | PnL/$cap | H1 /ch | H2 /ch | both+ |
+|---|---:|---:|---:|---:|---:|---:|---:|:--|
+| all | 1 | 1,614 | +50.81 | −44.55 | 8.3 | +0.0281 | +0.0347 | yes |
+| all | 2 | 1,614 | +123.49 | −72.11 | 10.0 | +0.1686 | −0.0126 | no |
+| **BOS** | **2** | **986** | **+143.46** | **−49.14** | **11.6** | **+0.2205** | **+0.0738** | **yes** |
+| BOS | 1 | 986 | +52.76 | −32.43 | 8.6 | +0.0150 | +0.0904 | yes |
+| CHoCH | 1 | 628 | **−1.95** | −34.45 | −0.5 | +0.0485 | −0.0541 | no |
+| CHoCH | 2 | 628 | **−19.97** | −70.18 | −2.2 | +0.0883 | −0.1503 | no |
+| CHoCH | 3 | 628 | **−81.20** | −158.08 | −3.6 | −0.0570 | −0.2007 | no |
+
+**The CHoCH events lose money at every depth**, and get worse the deeper the
+ladder. All of this strategy's P&L comes from the BOS half — the breaks *with*
+the prevailing bias, not the changes of character. Its rung 1 collapses from
+57.1% in H1 to 50.6% in H2, while BOS's holds at 54.6% / 57.4%.
+
+**But the filter is only selectable at depth 2**, and that is the interesting
+part. Fitting on H1 alone:
+
+* at **depth 1** H1 ranks CHoCH (+0.0485) above unfiltered (+0.0281) above BOS
+  (+0.0150) — so an honest procedure picks the **wrong half**, and is paid
+  −0.0541/chain on H2 instead of the +0.0904 BOS would have earned;
+* at **depth 2** H1 ranks BOS top (+0.2205) and it stays top on H2 (+0.0738)
+  against an unfiltered −0.0126.
+
+Against a permutation null of random equal-sized subsets, BOS scores p = 0.036 at
+depth 1 and p = 0.070 at depth 2. The effect is real at both depths; only at
+depth 2 can it be *found* without hindsight.
+
+**The session is the worst of any strategy measured** — Spearman H1->H2 across
+503 depth-1 sessions is **−0.381**, shrinkage is 150%, and only 3 of the top 20
+H1 sessions stay positive. Both H1-fitting criteria hand back a negative H2.
+There is no session filter here to find. Of the remaining 392 predicates over 15
+families, none survive either: Spearman −0.013 and −0.067, shrinkage 69% and
+109%, 8 of 15 families with both tails beating the baseline.
+
+Priced against the real ladder with a 2% fee, unfiltered depth 1 is dead from a
+$50 chain target (−1 at $50, −104,609 at $800). BOS depth 2 is not:
+
+| BOS, depth 2 | PnL | peak capital | PnL/$cap | PnL/maxDD |
+|---|---:|---:|---:|---:|
+| $50 target | +3,948 | 637 | 6.20 | 1.38 |
+| $200 target | +12,748 | 2,715 | 4.70 | 1.02 |
+| $400 target | +16,960 | 5,787 | 2.93 | 0.61 |
+
+**This is the weakest tradeable book measured.** PnL/maxDD never exceeds 1.57 at
+any target, against 4.95 for Candlesticks, 4.08 for Harmonic and 5.05 for CCI
+Williams — the drawdown is comparable to the profit throughout. Depth 3 prices
+*better* (+40,917 at $600, PnL/$cap 2.6, and 5.2x at $200 against depth 2's 4.7x)
+but is rejected because it is not positive in both halves (H2 −0.0099); that is
+what the holdout is for.
+
+A second honest caveat: BOS's two halves disagree about *where* its edge sits.
+In H1 it is rung 2 (63.3% against rung 1's 54.6%); in H2 it is rung 1 (57.4%
+against rung 2's 51.4%). The depth-2 book is positive in both halves for
+different reasons each time, which is weaker evidence than Harmonic's
+monotonically replicating ladder.
+
+At the $1 unit target: **986 chains, +143.46, maxDD −49.14, 11.6x peak capital,
+81.2% chain win rate, 22/27 green weeks (81%)**, worst week −19.02.
+
+**A scoring bug this strategy exposed.** The "both tails beat the baseline"
+family heuristic silently mis-reads *binary* categoricals. For a two-valued
+field the four predicates (`== A`, `!= A`, `== B`, `!= B`) are only **two
+distinct subsets**, so a perfectly one-directional effect scores 2/4 — which the
+heuristic had been reporting as chance. `event` scored 2/4 here while being the
+single most informative filter in the whole study. The heuristic is sound for
+ordered numeric families, where the two tails really are different subsets; for
+categoricals, count distinct subsets, not predicates.
+
+### Searching depth x session together — and what the search is worth
+
+A grid of 1,299 combinations (depths 1-3 x every contiguous UTC session of 6-24
+hours, min 150 chains) makes the overfitting risk concrete. Its own top pick is
+worthless: the best combo on H1 (`D=3 13-18`, +0.6769/chain) scores **−0.1634**
+per chain on H2. The top 20 on H1 average +0.4831 and deliver +0.1019 on H2 —
+**79% shrinkage**. Fit the other way round and the top 20 shrink from +0.5150 to
++0.2698. Never read a grid maximum as a result.
+
+What the grid *is* good for is showing where a rule sits in the distribution.
+Only **68 of 1,299 combos (5.2%)** beat `D=2 13-23` on **both** halves, against
+the ~25% you would expect if the halves were independent — the coarse rule was
+already near the 95th percentile of robustness. The 68 survivors cluster tightly
+on a **later** session, which is where the one real refinement lives.
+
+Per-hour edge at depth 1 (hit rate minus fill price), the two halves held apart,
+is the evidence that does not come from the grid:
+
+| hour UTC | 15 | 16 | 17 | 18 | 23 | 0 | 12 | 14 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| H1 | **−20.3** | +13.4 | +15.4 | +22.3 | +2.9 | +8.4 | +13.6 | +11.0 |
+| H2 | **−8.7** | +13.2 | +11.8 | +11.1 | +11.7 | +9.7 | +6.0 | +8.7 |
+
+**Hour 15 UTC is the single most reliably negative hour in the whole day, and
+`13-23` contains it.** Hours 19-22 and 1-11 mostly disagree between halves.
+Shifting the session to **16:00-01:59 UTC** drops hour 15, keeps every hour that
+is positive in both halves except 12 and 14, and stays one contiguous block:
+
+| | unfiltered | `--hours 13-23` | **`--hours 16-01`** |
+|---|---:|---:|---:|
+| H1 $/chain | +0.1187 | +0.2311 | **+0.2976** |
+| H2 $/chain | +0.0701 | +0.2486 | **+0.4446** |
+| chains | 941 | 430 | 359 |
+| PnL (target $1) | +89.85 | +102.76 | **+133.30** |
+| per chain | +0.0955 | +0.2390 | **+0.3713** |
+| max drawdown | −41.62 | −18.45 | **−17.65** |
+| green weeks | 18/27 | 21/27 | **22/27 (81%)** |
+| worst week | −20.85 | −5.30 | −13.26 |
+| rung-2 hit | 56.49% @ 0.543 | 61.46% @ 0.537 | **65.13% @ 0.528** |
+
+It beats `13-23` in **94.4%** of paired weekly block resamples (4,000, 2% fee)
+with the best 5th percentile of any candidate (+85.50 vs +45.14), and holds
++123.53 even at a 4% winnings fee.
+
+**Depth still stays at 2.** `D=3 16-01` books more on paper (+148.32 vs +133.30)
+and is the trap the first depth sweep already identified. Rung 3's own edge is
+noise — 17 to 44 bets per half, swinging from −6.4pp to +7.9pp — so depth 3 is
+not earning, it is adding variance: worse drawdown (−26.61 vs −17.65), fewer
+green weeks (20/27), a worst week of −22.85. And priced against the real ladder
+at a 2% fee, the extra size sinks it — best achievable P&L over the ladder span:
+
+| combo | best target | PnL | peak exposure | max DD | PnL/maxDD |
+|---|---:|---:|---:|---:|---:|
+| D=1 13-23 | $130 | +1,605 | 477 | −3,119 | 0.51 |
+| D=2 13-23 | $130 | +6,006 | 2,013 | −3,904 | 1.54 |
+| **D=2 16-01** | $220 | **+17,266** | 4,164 | −5,792 | **2.98** |
+| D=3 16-01 | $170 | +9,709 | 6,216 | −6,180 | 1.57 |
+| D=3 15-01 | $170 | +10,900 | 6,216 | −6,180 | 1.76 |
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --depth 2 --hours 16-01 --by week
+```
+
+`--hours` is inclusive and wraps midnight, so `16-01` means 16,17,…,23,0,1.
+
+**Caveats.** One 6-month path, ~1,270 signals, one preset; depth was chosen on
+that same window, so the *choice* of 2 is in-sample even though the per-rung
+mechanism that justifies it is not. Chains that run past the capture are counted
+as realised losses (5-6 per run). Fills assume you take the ladder that was
+resting at +5s and that your own order does not move it. And the ladder is
+`pm_l2_book`, which stops on 2026-07-27, so the `--use-book` rows cover the first
+4.8 months of the six.
+
+### The 15-minute market: RSI + BB *PM 15m Volume*
+
+The engine runs the 15-minute market too. `--interval 15m` reads
+`pm_window_15m` / `pm_quote_15m` (pmqb's 15m capture: the real +5s book from
+2026-07-03, Polymarket's own outcomes via Gamma) and steps rungs 900s apart.
+`--fee-model taker` charges Polymarket's crypto taker fee on every **buy**,
+`shares × 0.07 × p × (1 − p)` — about 1.7c a share at 55c, most of the edge —
+instead of a take on winnings, so a losing rung loses its fee too. `--require`
+filters entries on the signal's features.
+
+```bash
+python3 -m backend.data.pm_martingale_backtest --interval 15m --preset "PM 15m Volume" \
+    --from 2026-07-03 --to 2026-09-13 --depth 1 --fee 0.07 --fee-model taker \
+    --require "push3>=0.3" --by week
+```
+
+**Answer: depth 1 (no ladder) + `push3 >= 0.3`.** Real prices, 2026-07-03 →
+2026-09-13, taker fee, $1 target, H1/H2 split at 2026-08-08:
+
+| | chains | hit | PnL | /chain | max DD | H1 /chain | H2 /chain |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| D=1 unfiltered | 205 | 56.59% | +4.75 | +0.0232 | −16.59 | +0.1321 | −0.0869 |
+| **D=1 `push3 >= 0.3`** | 111 | 62.16% | +17.56 | +0.1582 | −13.62 | +0.2700 | **+0.0444** |
+| D=3 unfiltered | 157 | 58.04% | +49.04 | +0.3124 | −17.79 | +0.3963 | +0.2182 |
+| D=3 `push3 >= 0.3` | 91 | 62.77% | +35.52 | +0.3903 | −22.38 | +0.7793 | −0.0438 |
+
+Sized against the real top-20 ladder (extracted from `pm15m_l2.jsonl`, since
+`pm_quote_15m` keeps only the best level), PnL by chain target:
+
+| target | D=1 unfiltered | **D=1 push3** | peak $ | PnL/maxDD | D=3 unfiltered | D=3 push3 |
+|---:|---:|---:|---:|---:|---:|---:|
+| $10 | +43 | **+173** | 39 | 1.25 | +484 | +351 |
+| $50 | +112 | **+795** | 115 | 1.12 | +2,198 | +1,619 |
+| $100 | +69 | **+1,536** | 234 | 1.06 | +2,266 | +3,470 |
+| $250 | −828 | **+3,410** | 593 | 0.87 | +5,737 | +5,085 |
+| $500 | −4,499 | **+5,231** | 1,195 | 0.63 | +1,394 | +9,884 |
+
+The filter is what makes the flat bet tradeable at all. D=3 books more per
+target here, but it needs 3–8x the capital (peak $397 at a $25 target against
+D=1's $234 at $100), and at matched capital the flat bet earns about twice as much.
+
+**Ten weeks cannot pick a depth, so the depth comes from 3.9 years of candles.**
+The Binance 15m candle agrees with Polymarket's own 15m resolution on **96.2%**
+of 6,963 windows (the 5m proxy is ~85%), so next-candle direction is a usable
+stand-in for 4,120 signals from 2022-09-13: **A** to 2024-09-13 (never swept),
+**B** to 2025-12-13 (the preset's train span), **C** to 2026-07-03. Per-rung hit,
+each rung conditional on every earlier one losing:
+
+| | rung 1 | rung 2 | rung 3 | rung 4 |
+|---|---:|---:|---:|---:|
+| all 4,120 | 60.41% | 59.90% | 62.84% | 60.49% |
+
+**Flat.** Unlike 5m, a loss makes the next 15m bet neither better nor worse, so
+every rung has the same edge and the ladder only multiplies the stake. Priced at
+the real mean fill (0.537) plus the taker fee, PnL / (peak exposure + |max DD|) —
+the bankroll a run needs:
+
+| depth | A | B | C | real window (proxy) |
+|---:|---:|---:|---:|---:|
+| **1** | **10.22** | **7.81** | **3.91** | 1.12 |
+| 2 | 6.41 | 4.86 | 1.46 | 0.85 |
+| 3 | 8.31 | 4.92 | 2.32 | **2.54** |
+| 4 | 4.71 | 2.00 | 3.22 | 0.99 |
+
+Walked on the median real book (248 shares within 1c, 1,186 within 5c, 3,602 in
+the top 20), D=1 leads A, B and C at every target to $500. It still leads with a
+2pp haircut on the fill (0.557) and on the 25th-percentile book — in all but one
+cell, C at a $1 target and the haircut fill, where D=4 has 2.00 against 1.94.
+D=3 wins only the ten real weeks, and D=2 wins nothing. Capacity also points to
+D=1: on the median book, rung 4 cannot be filled at a $100 target or rung 3 at
+$250, while D=1 still earns at $250 under every stress.
+
+**The candle flatters fades by ~2pp, and it does so one-sidedly.** On the 205
+real-window signals the candle says 58.54% and Polymarket 56.59% — 7 candle wins
+resolved as losses, 3 the other way. Across every window, when the two disagree
+Polymarket sides with the *previous* bar 60.5% of the time (74% after a bar of
+0.75–1.0 average ranges). The strike is a Chainlink 60s TWAP, which still carries
+the move being faded. That is why the 0.557 fill above is the check that matters.
+
+**`push3` is the only filter that survives, and it was not fitted on this data.**
+It is Oscillators' 5m filter unchanged: the 3-bar % move *into* the signal,
+oriented to the bet (see `push_pct`). D=1 PnL/chain, unfiltered → push3:
+A +0.1131 → +0.1285, B +0.1188 → +0.1565, C +0.1031 → +0.1251, real H1
++0.1321 → +0.2700, real H2 −0.0869 → +0.0444. Permutation null on the real window
+p = 0.034, and it still wins every period at the 0.557 fill. Cuts of 0.3 and 0.4
+both work; 0.2 is too loose.
+
+**Everything else fails, searched as widely as the data allows** (61 candle,
+cross-strategy, 5m and history features, plus 10 book features):
+
+- *1,006 candle predicates over 50 families*, fitted on A+B and judged on C:
+  40 reach z ≥ +2 and 37 reach z ≤ −2, 21/40 replicate (chance), Spearman
+  A+B → C +0.08. Eight clear z ≥ 1 in all of A, B and C against 3.0 under an
+  outcome shuffle (p = 0.087) — suggestive for the family, established for no
+  member.
+- *780 real-price predicates* including the book (fill, spread, top/5c/20-level
+  imbalance oriented to the bet, depth, the −60s → +5s drift, Binance's move to +5s,
+  the previous window's resolution), fitted on H1 and judged on H2 at D=1/2/3:
+  Spearman +0.016 / +0.071 / +0.033, top-20 shrinkage 128% / 99% / 56%, and
+  29 of 51 numeric families beat baseline in *both* tails.
+- *The 5m-fitted filters*: `fill >= 0.60` (24 chains; `fill <= 0.55` also beats
+  baseline, so the family is noise), `top_imb_sd >= 0`, the sessions 16-01 /
+  13-23 / 14-00 / 17-06, weekend-only and skip-after-bust. None holds in both
+  halves.
+- *Sessions*: a 408-window hour grid anti-predicts at D=1 (Spearman A+B → C
+  −0.300).
+- *Second filters on top of push3*: 757 subsets — 42 at z ≥ +2 against 43 at
+  z ≤ −2, Spearman A+B → C −0.201, and 1 replicates in A, B and C against 3.0 by
+  chance (p = 0.83). None also beats push3 in both real halves.
+- *Greedy stacking* on A+B at D=3: nine filters double the in-sample PnL/chain
+  (+0.31 → +0.65) while C's total PnL falls from +108.92 to +85.76 and the real
+  window's from +58.28 to +24.79.
+
+Two near misses, both finds of the real window that the longer record rejects.
+`pos672_b >= 0.75` (price in the top quarter of its 1-week range, oriented to the
+bet), stacked on push3, is the best real-window book at every size (+9,244 at a
+$500 target, PnL/maxDD 1.98 against 0.63), but over B it is worse than push3 alone
+(3.65 against 7.93). `abs_run >= 4` (four or more consecutive candles *into* the
+signal — 100% of such runs) never busts at D=3 in the real window (48 chains),
+but over A it is worse than unfiltered (2.10 against 8.31).
+
+**Caveats.** Ten weeks of real prices and 111 filtered chains; H2 alone is a
+losing month for the unfiltered preset, and push3 only shrinks it to +0.0444 a
+chain. Fills take the +5s book from a ~2s-sampled top-20 ladder and assume your
+order does not move it. Real rung fills creep 0.537 → 0.540 → 0.550. Makers pay
+no fee, so a resting entry that fills would keep the ~1.7c a share these numbers
+give away.
+
+### The "no-loss" depth for every 15m preset — and why it is not one
+
+A recovery ladder never loses only if it is deeper than the longest run of
+losing windows any chain ever met. Measured for all 68 `PM 15m` presets with the
+engine at depth 40 (so nothing busts and the deepest rung used *is* the no-loss
+depth), on the whole 15m record 2017-08 → 2026-09-16 via the candle proxy,
+the trailing two years, and the real window (real fills, Gamma outcomes,
+2026-07-03 →). Capital is the peak chain exposure per **$1 of target** at the
+real 0.537 fill plus the taker fee, and the last figure is the record's whole
+P&L (= its chain count, every chain wins) divided by that capital.
+
+Cells: **depth needed on the whole record** / trailing 2 years / real window ·
+peak capital per $1 target · P&L ÷ capital over nine years.
+
+| Strategy | Volume | Balanced | Selective |
+|---|---|---|---|
+| RSI + BB | **12** / 11 / 6 · $16,318 · 0.44 | **12** / 11 / 5 · $16,318 · 0.27 | **12** / 11 / 4 · $16,318 · 0.17 |
+| Stoch Wick | **12** / 12 / 6 · $16,318 · 0.23 | **12** / 12 / 6 · $16,318 · 0.15 | **11** / 11 / 7 · $7,271 · 0.25 |
+| ATR DevExh | **11** / 10 / 7 · $7,271 · 0.78 | **11** / 10 / 7 · $7,271 · 0.47 | **10** / 7 / 6 · $3,239 · 0.40 |
+| BB Squeeze | **12** / 10 / 7 · $16,318 · 0.49 | **12** / 10 / 9 · $16,318 · 0.23 | **12** / 8 / 4 · $16,318 · 0.11 |
+| Zscore MS | **12** / 11 / 9 · $16,318 · 0.43 | **11** / 9 / 6 · $7,271 · 0.49 | **9** / 9 / 7 · $1,443 · 0.90 |
+| Regime Switch | **12** / 10 / 9 · $16,318 · 0.43 | **12** / 10 / 9 · $16,318 · 0.30 | **10** / 10 / 9 · $3,239 · 0.67 |
+| Volume Exhaustion | **13** / 13 / 7 · $36,623 · 0.41 | **12** / 10 / 7 · $16,318 · 0.27 | **10** / 10 / 8 · $3,239 · 0.51 |
+| Jump Exhaustion | **12** / 11 / 9 · $16,318 · 0.92 | **11** / 11 / 7 · $7,271 · 0.90 | **11** / 11 / 7 · $7,271 · 0.32 |
+| CCI Williams | **14** / 14 / 7 · $82,190 · 0.09 | **12** / 10 / 7 · $16,318 · 0.26 | **10** / 10 / 4 · $3,239 · 0.72 |
+| Multi Horizon | **12** / 11 / 8 · $16,318 · 0.50 | **12** / 10 / 7 · $16,318 · 0.31 | **12** / 10 / 3 · $16,318 · 0.13 |
+| Fair Value Gap | **12** / 12 / 8 · $16,318 · 0.72 | **12** / 12 / 8 · $16,318 · 0.19 | **13** / 13 / 5 · $36,623 · 0.04 |
+| Fib Retracement | **12** / 10 / 6 · $16,318 · 0.53 | **12** / 9 / 6 · $16,318 · 0.22 | **12** / 7 / 5 · $16,318 · 0.09 |
+| Candlesticks | **10** / 9 / 7 · $3,239 · 2.41 | **10** / 8 / 7 · $3,239 · 1.34 | **10** / 9 / 7 · $3,239 · 0.40 |
+| Reversal | **14** / 14 / 7 · $82,190 · 0.08 | **14** / 14 / 7 · $82,190 · 0.07 | **11** / 11 / 7 · $7,271 · 0.20 |
+| Harmonic Patterns | **14** / 14 / 7 · $82,190 · 0.10 | **14** / 14 / 7 · $82,190 · 0.04 | **12** / 12 / 7 · $16,318 · 0.15 |
+| CHoCH | **12** / 12 / 7 · $16,318 · 0.49 | **10** / 8 / 4 · $3,239 · 1.16 | **10** / 8 / 4 · $3,239 · 0.57 |
+| Momentum Indicators | **14** / 14 / 8 · $82,190 · 0.20 | **12** / 9 / 6 · $16,318 · 0.21 | **10** / 7 / 7 · $3,239 · 0.28 |
+| Elliott Wave | **14** / 14 / 7 · $82,190 · 0.10 | **14** / 14 / 10 · $82,190 · 0.06 | **14** / 14 / 6 · $82,190 · 0.02 |
+| Renko | **11** / 11 / 8 · $7,271 · 0.99 | **10** / 7 / 5 · $3,239 · 0.88 | **10** / 9 / 9 · $3,239 · 0.40 |
+| Trend Lines | **12** / 12 / 6 · $16,318 · 0.64 | **10** / 10 / 6 · $3,239 · 1.06 | **13** / 13 / 4 · $36,623 · 0.06 |
+| Support & Resistance | **14** / 14 / 8 · $82,190 · 0.24 | **9** / 9 / 7 · $1,443 · 2.29 | **9** / 9 / 7 · $1,443 · 2.06 |
+| Gann Angles | **13** / 13 / 9 · $36,623 · 0.35 | **12** / 12 / 8 · $16,318 · 0.39 | — |
+| Oscillators | **11** / 11 / 7 · $7,271 · 1.24 | **12** / 11 / 8 · $16,318 · 0.21 | **11** / 10 / 6 · $7,271 · 0.26 |
+
+**The answer is 9–14 rungs, median 12, and it belongs to the tape, not to any
+strategy.** The longest run of same-direction 15m candles in the record is 16;
+there are 95 runs of 10 or more and 20 of 12 or more. A chain that opens against
+one of them loses until it ends, whatever signal opened it — which is why the
+deepest chains of 57 of the 68 presets fall on the same four dates (2021-08-04,
+2022-05-05, 2025-11-13, 2026-06-24). Only 923 of 353,317 chains across all
+presets ever reached rung 8.
+
+**Why this is not a promise.**
+
+- *The record's maximum is one chain.* The 2-year depth is 1–5 rungs shallower
+  than the full-record depth for 30 of 68 presets (RSI + BB: 11 vs 12; Fib
+  Selective: 7 vs 12; Renko Balanced: 7 vs 10). A ladder sized to the last two
+  years would have busted on the full record, and the real window already
+  needed 10 rungs for Elliott Wave Balanced in ten weeks.
+- *One more loss than the record costs 2.24x the whole stack.* Each rung
+  multiplies the sunk outlay by `1 / (1 − breakeven)` = 2.24 at these prices:
+  after 8 losses $642 is gone per $1 of target, after 10 $3,239, after 12
+  $16,318, after 14 $82,190. At the median depth 12 a single 13-rung streak —
+  four rungs deeper than anything in 95 long runs, but one deeper than the
+  record — costs $36,623 per $1 target, five times the nine-year profit.
+- *It does not pay even when it holds.* P&L ÷ peak capital over nine years is
+  below 1.0 for 61 of 68 presets — i.e. under ~5% a year on the capital the
+  ladder must hold in reserve — and the best (Candlesticks Volume, 2.41;
+  Support & Resistance Balanced, 2.29) need a $3,239 / $1,443 reserve per $1 of
+  target. RSI + BB *Volume* at depth 1 earns 4–10 per dollar of bankroll on
+  the same proxy in every multi-year period (table above); at depth 12 it is 0.44.
+- *It cannot be filled.* Rung 10 of a $1 target buys ~$1,800 of shares; the
+  median 15m book holds ~$650 within 5c of the best price. At any real target
+  the top rungs walk off the ladder long before they could recover.
+
+So: the depth that never lost is 9–14, it needs $1,400–$82,000 of reserve per $1
+of target, it would have returned under 5% a year on that reserve, and one
+streak longer than the record — which the 2-year-vs-9-year comparison shows is
+ordinary — wipes it out several times over. Use the fitted depths (1 for most,
+3 where the rungs were shown to earn) and treat a bust as a cost of business,
+not something a deeper ladder can abolish.
+
+### Fitted depth for every 5m preset on two years of history
+
+The real 5m book only goes back to 2026-02-13, so depth was re-fitted for all
+122 `PM 5m` presets on **two years of candles** (2024-09-13 → 2026-09-13, split
+into a first year H1 and a last year H2), with 2023-09-13 → 2024-09-13 as an
+extra year that no sweep ever trained on, and the real window (real +5s fills,
+real resolutions, 2026-02-13 → 2026-09-16) as the confirmation. Measured
+2026-09-16 with the engine above; scratch `depth5m.py` / `report5m.py`.
+
+*Proxy.* Outcome = the Binance 5m candle's direction. Over the real window it
+agrees with the market's own resolution on **95.5%** of 60,274 windows (98% in
+Feb–Mar, 87–91% in Aug–Sep), and in the disagreements the market sides with the
+*previous* bar 58.7% of the time, so the proxy flatters a fade slightly: at
+depth 1 the real hit rate is a median **0.56pp below** the proxy's on the same
+signals. Every rung buys at a constant fill equal to that preset's real mean
+rung-1 fill (0.508–0.564, median 0.530), plus the 0.07 taker fee on every buy;
+a +1c and a +2c variant stress the fill. Target $1 per chain.
+
+*Rule.* Start at depth 1. Add a rung only while the next rung is itself
+positive-edge (hit ≥ breakeven) on ≥ 50 bets in **both** years, chain P&L
+stays positive in both years, and two-year PnL / (peak chain exposure +
+|max drawdown|) improves. No skipping a rung. A preset whose depth 1 is not
+positive in both years gets no depth at all.
+
+**Rung hit rates are flat on the long record.** Pooled over all 122 presets,
+each rung conditional on every earlier rung losing:
+
+| | rung 1 | rung 2 | rung 3 | rung 4 | rung 5 |
+|---|---:|---:|---:|---:|---:|
+| 2y proxy, bets | 316,977 | 142,349 | 64,252 | 28,858 | 13,235 |
+| 2y proxy, hit | 55.09% | 54.86% | 55.09% | 54.14% | 55.14% |
+| 2y proxy, edge vs breakeven | +0.55pp | +0.34pp | +0.58pp | −0.35pp | +0.65pp |
+| real window, hit | 54.51% | 55.26% | 54.97% | 54.24% | 57.10% |
+| real window, mean fill | 0.527 | **0.535** | **0.538** | 0.538 | 0.546 |
+| real window, edge | +0.07pp | +0.04pp | −0.52pp | −1.28pp | +0.79pp |
+
+A loss does not make the next 5m bet better across the board — the rung-2 lift
+seen on RSI + BB *Volume* over six months does not hold on two years (its rung 2
+is −0.79pp in H1, +0.61pp in H2). And on the real book rung 2 is 0.8c dearer
+than rung 1 and rung 3 1c dearer, which the constant-fill proxy cannot see.
+So depth mostly multiplies the stake: the median PnL / (peak + |maxDD|) across
+presets is 1.49 / 0.94 / 0.81 / 0.37 at depths 1–4 on two years, 1.12 / 0.66 /
+0.52 / 0.38 on the last year alone, and a depth chosen on the first year that
+was deeper than 1 beat depth 1 in the second year only **21 times out of 64**.
+At the 0.07 taker fee the whole thing is thin: with every fill 2c dearer the
+median preset is negative at every depth.
+
+**Picks: depth 1 for 65 presets, 2 for 12, 3 for 4, and no depth for 41** (not
+positive in both years at any depth: every ATR DevExh weekday preset, the three
+big Volume Exhaustion presets, Jump Exhaustion *Volume* / *All Days* /
+*Balanced*, Harmonic *Volume*, Reversal *BOS Volume*, Trend Lines, Support &
+Resistance, Fib *Volume*, Gann *Angled Fan*, …). Of the 16 deeper picks only
+**7** keep a depth above 1 with a +1c fill, and only **9** have the real window
+also prefer a depth above 1. The ones that survive every check:
+
+- **RSI + BB *Balanced* → depth 3.** Rungs 2 and 3 are positive in 2023-24, H1,
+  H2 *and* the real window (rung 3: +5.9 / +5.9 / +6.6 / +8.1pp); PnL/cap
+  2.01 → 2.95 → 6.60 at depths 1–3; real +113.3 on 599 chains at $1.
+- **Jump Exhaustion *Sat Hi Hit* and *Sat Volume* → depth 2.** Rung 2 positive
+  in every period (+9.2 / +4.5 / +4.6 / +4.6pp for Sat Hi Hit); +1c, the last
+  year and the real window all say 2; real +36.5 / +46.6.
+- **Harmonic *Balanced* → depth 2** on the two-year rule and the real window
+  (+40.6), but +1c drops it to 1 — treat it as depth 1–2.
+
+Zscore MS *Volume* and Regime Switch *Volume* pick depth 2 on the proxy and pass
++1c, but **lose on the real window at every depth** (−62 and −121 at depth 1):
+they are the thin-edge high-volume presets where the 0.56pp proxy optimism is
+the whole margin. Regime Switch *Wknd Volume* / *Wknd Balanced* and Reversal
+*BOS Balanced* pick depth 3 and the real window agrees, but +1c drops them to
+no depth at all.
+
+Full table. *fill* = real mean rung-1 fill used by the proxy; **depth** = the
+rule above on two years; *+1c* = the same rule with every fill 1c dearer;
+*1y* / *real* = the best depth on the last year alone / the real window alone
+(argmax, positive P&L, ≥ 50 bets on the deepest rung); *2y PnL/cap* = two-year
+PnL / (peak + |maxDD|) at depths 1 · 2 · 3; *real P&L* = the real window at the
+recommended depth, $1 target. "—" = no positive depth.
+
+| Strategy | Preset | sig/2y | fill | **depth** | +1c | 1y | real | 2y PnL/cap D1 · D2 · D3 | real P&L @ depth (chains) |
+|---|---|---:|---:|:---:|:---:|:---:|:---:|---|---:|
+| RSI + BB | Volume | 4,824 | 0.537 | **1** | — | 1 | 3 | +2.24 · -0.11 · +0.15 | -7.9 (1484) |
+| RSI + BB | Balanced | 2,763 | 0.534 | **3** | 3 | 3 | 3 | +2.01 · +2.95 · +6.60 | +113.3 (599) |
+| RSI + BB | Hi Hit | 110 | 0.545 | — | — | 1 | — | +4.28 · +1.14 · +0.57 | — |
+| RSI + BB | Wknd Volume | 1,290 | 0.540 | — | — | 3 | 1 | +0.12 · -0.05 · +0.85 | — |
+| RSI + BB | Wknd Balanced | 965 | 0.537 | **1** | 1 | 1 | 2 | +4.26 · +2.06 · +0.89 | +31.4 (298) |
+| RSI + BB | Wknd Hi Hit | 193 | 0.524 | **1** | 1 | 1 | 1 | +1.55 · +0.72 · +0.71 | +19.4 (70) |
+| RSI + BB | Volume - 2yr Train | 7,159 | 0.535 | **1** | — | 1 | 3 | +2.27 · +0.20 · +0.91 | +10.9 (2270) |
+| Stoch Wick | Volume | 7,022 | 0.533 | **1** | — | 1 | 4 | +1.13 · -0.33 · -0.24 | -30.2 (1807) |
+| Stoch Wick | Balanced | 2,157 | 0.532 | **2** | — | 2 | 2 | +0.56 · +0.77 · +1.17 | +82.5 (405) |
+| Stoch Wick | Hi Hit | 400 | 0.520 | **1** | 1 | 2 | 1 | +1.74 · +1.17 · +1.39 | +1.6 (111) |
+| Stoch Wick | Wknd Volume | 2,780 | 0.542 | **1** | — | 1 | 2 | +0.57 · -0.23 · +0.20 | +71.8 (612) |
+| Stoch Wick | Wknd Balanced | 1,636 | 0.536 | **1** | — | 1 | 1 | +1.51 · -0.03 · +0.43 | +57.5 (389) |
+| Stoch Wick | Wknd Hi Hit | 129 | 0.564 | **1** | 1 | 1 | — | +1.09 · -0.09 · -0.79 | -0.3 (23) |
+| Stoch Wick | Volume - 2yr Train | 5,148 | 0.529 | **1** | — | 1 | — | +2.05 · -0.42 · -0.78 | -15.9 (1340) |
+| ATR DevExh | Volume | 1,957 | 0.525 | — | — | — | — | -0.78 · -0.72 · -0.60 | — |
+| ATR DevExh | Balanced | 1,126 | 0.526 | — | — | — | — | -0.54 · -0.55 · -0.52 | — |
+| ATR DevExh | Hi Hit | 695 | 0.535 | — | — | 1 | 2 | +0.88 · +0.62 · +0.10 | — |
+| ATR DevExh | Wknd Volume | 1,937 | 0.533 | **1** | — | 1 | 1 | +2.33 · +1.68 · +0.85 | +48.8 (453) |
+| ATR DevExh | Wknd Balanced | 402 | 0.529 | — | — | 1 | — | -0.41 · -0.08 · -0.50 | — |
+| ATR DevExh | Wknd Hi Hit | 328 | 0.537 | **1** | — | 1 | 1 | +0.22 · -0.14 · +0.23 | +12.7 (64) |
+| ATR DevExh | Volume - 2yr Train | 2,195 | 0.524 | **1** | — | 4 | — | +0.75 · -0.27 · +0.81 | -4.0 (494) |
+| BB Squeeze | Volume | 4,399 | 0.526 | — | — | 5 | — | +0.61 · +1.78 · +3.03 | — |
+| BB Squeeze | Balanced | 761 | 0.534 | **1** | 1 | 1 | 1 | +1.88 · +1.85 · +0.81 | +0.9 (182) |
+| BB Squeeze | Hi Hit | 150 | 0.529 | — | — | 1 | — | +2.26 · +2.46 · +1.41 | — |
+| BB Squeeze | Wknd Volume | 593 | 0.543 | **1** | 1 | 1 | 2 | +2.37 · +1.56 · +2.49 | -6.5 (187) |
+| BB Squeeze | Wknd Balanced | 218 | 0.532 | **1** | 1 | 1 | — | +3.23 · +2.72 · +3.12 | -0.4 (90) |
+| BB Squeeze | Wknd Hi Hit | 148 | 0.515 | **1** | 1 | 1 | 1 | +9.84 · +7.30 · +7.03 | +8.8 (55) |
+| BB Squeeze | Volume - 2yr Train | 4,889 | 0.524 | **2** | — | 5 | — | +2.52 · +2.71 · +1.73 | -107.9 (1126) |
+| Zscore MS | Volume | 5,456 | 0.531 | **2** | 2 | 2 | — | +3.67 · +4.64 · +3.23 | -62.1 (1191) |
+| Zscore MS | Balanced | 1,289 | 0.533 | — | — | 3 | — | +0.28 · +0.31 · +2.15 | — |
+| Zscore MS | Hi Hit | 147 | 0.553 | **1** | 1 | 1 | 1 | +2.18 · +0.98 · +0.45 | +4.9 (53) |
+| Zscore MS | Wknd Volume | 1,200 | 0.535 | **1** | 1 | 1 | 2 | +3.63 · +2.89 · +1.61 | +36.9 (421) |
+| Zscore MS | Wknd Balanced | 803 | 0.526 | **2** | — | 3 | — | +0.53 · +1.24 · +0.56 | -27.1 (175) |
+| Zscore MS | Wknd Hi Hit | 157 | 0.527 | **1** | 1 | 1 | 1 | +3.11 · +4.34 · +2.47 | +9.5 (65) |
+| Zscore MS | Volume - 2yr Train | 5,456 | 0.531 | **2** | 2 | 2 | — | +3.67 · +4.64 · +3.23 | -62.1 (1191) |
+| Regime Switch | Volume | 5,566 | 0.520 | **2** | 2 | 2 | — | +4.71 · +4.92 · +4.35 | -120.6 (1333) |
+| Regime Switch | Balanced | 1,409 | 0.528 | **1** | — | 1 | 1 | +4.32 · +3.16 · +2.19 | +9.1 (326) |
+| Regime Switch | Hi Hit | 155 | 0.523 | **1** | 1 | 1 | — | +3.14 · +3.05 · +2.25 | +3.5 (33) |
+| Regime Switch | Wknd Volume | 1,934 | 0.528 | **3** | — | 3 | 3 | +2.20 · +2.70 · +2.76 | +74.9 (431) |
+| Regime Switch | Wknd Balanced | 1,309 | 0.529 | **3** | — | 3 | 3 | +1.47 · +2.08 · +3.60 | +88.9 (300) |
+| Regime Switch | Wknd Hi Hit | 160 | 0.524 | **1** | 1 | 1 | — | +1.46 · +1.04 · +2.05 | +11.6 (47) |
+| Regime Switch | Volume - 2yr Train | 4,038 | 0.528 | **2** | — | 2 | — | +1.73 · +3.84 · +2.73 | -34.1 (956) |
+| Volume Exhaustion | Selective | 6,076 | 0.531 | — | — | 1 | 1 | +0.04 · -0.29 · -0.47 | — |
+| Volume Exhaustion | Max Hit | 167 | 0.526 | **1** | 1 | 1 | 1 | +4.48 · +1.34 · +0.48 | +23.1 (68) |
+| Volume Exhaustion | Volume | 5,485 | 0.530 | — | — | 1 | 1 | +0.17 · -0.24 · +0.38 | — |
+| Volume Exhaustion | Balanced | 3,748 | 0.530 | — | — | 1 | 2 | +0.48 · -0.49 · -0.43 | — |
+| Volume Exhaustion | Hi Hit | 150 | 0.554 | **1** | 1 | 1 | — | +1.12 · +0.08 · +0.25 | +2.3 (46) |
+| Volume Exhaustion | Wknd Volume | 1,071 | 0.526 | **1** | 1 | 1 | 2 | +3.03 · +2.71 · +4.92 | +21.5 (266) |
+| Volume Exhaustion | Wknd Balanced | 842 | 0.529 | **1** | 1 | 3 | 1 | +2.62 · +2.05 · +4.30 | +25.1 (230) |
+| Volume Exhaustion | Wknd Hi Hit | 798 | 0.538 | **1** | 1 | 1 | 1 | +2.55 · +1.19 · +2.25 | +38.5 (259) |
+| Volume Exhaustion | Volume - 2yr Train | 4,389 | 0.532 | **1** | — | 1 | 1 | +0.91 · -0.23 · +0.47 | +52.0 (1343) |
+| Jump Exhaustion | Sat Hi Hit | 801 | 0.539 | **2** | 2 | 2 | 2 | +3.95 · +4.25 · +3.76 | +36.5 (232) |
+| Jump Exhaustion | Sat Volume | 1,531 | 0.532 | **2** | 2 | 3 | 2 | +2.43 · +3.31 · +3.02 | +46.6 (412) |
+| Jump Exhaustion | All Days | 6,867 | 0.534 | — | — | 3 | 3 | -0.36 · -0.36 · +0.21 | — |
+| Jump Exhaustion | Volume | 5,569 | 0.534 | — | — | — | 4 | -0.20 · -0.12 · -0.05 | — |
+| Jump Exhaustion | Balanced | 3,027 | 0.536 | — | — | 1 | 3 | +0.33 · +0.46 · +0.28 | — |
+| Jump Exhaustion | Hi Hit | 430 | 0.527 | **2** | 2 | 2 | 1 | +1.37 · +2.18 · +0.79 | +53.1 (114) |
+| Jump Exhaustion | Wknd Volume | 1,727 | 0.538 | **1** | 1 | 1 | 3 | +4.37 · +3.31 · +3.22 | +77.2 (571) |
+| Jump Exhaustion | Wknd Balanced | 736 | 0.532 | — | — | 1 | 1 | +0.91 · +1.07 · +3.57 | — |
+| Jump Exhaustion | Wknd Hi Hit | 110 | 0.537 | **1** | 1 | 1 | — | +0.86 · +1.52 · +1.69 | +12.6 (32) |
+| Jump Exhaustion | Volume - 2yr Train | 8,894 | 0.533 | — | — | — | 3 | -0.20 · -0.23 · -0.04 | — |
+| CCI Williams | Selective | 6,558 | 0.532 | **1** | — | 1 | — | +1.58 · +0.76 · -0.27 | -47.0 (1776) |
+| CCI Williams | Max Hit | 202 | 0.524 | **1** | 1 | 1 | 1 | +3.86 · +0.94 · +1.04 | +5.8 (66) |
+| CCI Williams | Volume | 8,444 | 0.532 | **1** | — | 2 | 5 | +1.41 · +0.73 · +0.07 | -5.6 (2137) |
+| CCI Williams | Balanced | 2,676 | 0.541 | — | — | 2 | 2 | -0.18 · +0.08 · -0.83 | — |
+| CCI Williams | Hi Hit | 113 | 0.525 | **1** | 1 | 1 | — | +1.78 · +0.08 · +0.16 | +1.6 (37) |
+| CCI Williams | Wknd Volume | 3,046 | 0.540 | **1** | — | 2 | 1 | +2.89 · +1.09 · +0.10 | +21.7 (791) |
+| CCI Williams | Wknd Balanced | 1,776 | 0.540 | **1** | — | 2 | 2 | +4.39 · +2.36 · +1.10 | +8.7 (477) |
+| CCI Williams | Wknd Hi Hit | 135 | 0.528 | — | — | — | — | +0.22 · -0.23 · -0.72 | — |
+| CCI Williams | Volume - 2yr Train | 8,444 | 0.532 | **1** | — | 2 | 5 | +1.41 · +0.73 · +0.07 | -5.6 (2137) |
+| Multi Horizon | Selective | 1,919 | 0.547 | — | — | 2 | 1 | +0.59 · +0.33 · +0.46 | — |
+| Multi Horizon | Max Hit | 378 | 0.547 | **1** | 1 | 1 | 1 | +1.51 · +0.87 · +0.32 | +5.3 (95) |
+| Multi Horizon | Volume | 4,619 | 0.534 | **1** | — | 1 | 1 | +0.97 · -0.47 · +1.01 | +38.4 (1420) |
+| Multi Horizon | Balanced | 1,519 | 0.525 | — | — | 3 | 3 | +0.93 · +0.65 · +1.40 | — |
+| Multi Horizon | Hi Hit | 105 | 0.533 | **1** | 1 | 1 | — | +2.15 · +1.15 · +1.11 | +1.9 (29) |
+| Multi Horizon | Wknd Volume | 1,127 | 0.537 | **1** | 1 | 1 | 2 | +2.21 · +0.67 · +1.80 | +38.1 (373) |
+| Multi Horizon | Wknd Balanced | 792 | 0.528 | **1** | 1 | 1 | 1 | +2.76 · +1.86 · +1.31 | +21.2 (268) |
+| Multi Horizon | Wknd Hi Hit | 367 | 0.531 | **1** | 1 | 1 | 1 | +3.47 · +2.71 · +1.47 | +32.7 (135) |
+| Multi Horizon | Volume - 2yr Train | 4,619 | 0.534 | **1** | — | 1 | 1 | +0.97 · -0.47 · +1.01 | +38.4 (1420) |
+| Fair Value Gap | Volume - 2yr Train | 2,243 | 0.514 | — | — | 1 | — | +0.30 · -0.64 · -0.72 | — |
+| Fib Retracement | Volume | 3,683 | 0.514 | — | — | 5 | 4 | -0.90 · -0.56 · +0.30 | — |
+| Fib Retracement | Balanced | 1,694 | 0.522 | **1** | 1 | 4 | — | +3.17 · -0.02 · -0.58 | -16.1 (453) |
+| Fib Retracement | Selective | 1,245 | 0.518 | — | — | 4 | — | -0.44 · +0.13 · -0.15 | — |
+| Fib Retracement | Hi Hit | 303 | 0.511 | — | — | 2 | 2 | +0.11 · +2.02 · +0.17 | — |
+| Candlesticks | Volume | 11,767 | 0.519 | **1** | — | 4 | — | +1.99 · +1.72 · +2.68 | -88.3 (3000) |
+| Candlesticks | Balanced | 4,587 | 0.528 | **1** | — | 1 | 1 | +1.41 · +0.70 · -0.31 | +31.8 (1214) |
+| Candlesticks | Selective | 1,829 | 0.532 | — | — | 1 | 1 | -0.16 · -0.72 · -0.81 | — |
+| Candlesticks | Hi Hit | 482 | 0.535 | — | — | — | 1 | -0.02 · +0.19 · -0.26 | — |
+| Reversal | BOS Volume | 7,860 | 0.528 | — | — | 4 | 2 | -0.07 · +1.67 · +1.85 | — |
+| Reversal | BOS Balanced | 5,612 | 0.532 | **3** | — | 1 | 4 | +1.04 · +1.31 · +1.67 | +176.9 (1492) |
+| Harmonic Patterns | Volume | 10,023 | 0.532 | — | — | 6 | 5 | -0.61 · -0.81 · -0.00 | — |
+| Harmonic Patterns | Balanced | 2,436 | 0.530 | **2** | 1 | 1 | 2 | +2.07 · +3.27 · +1.24 | +40.6 (633) |
+| Harmonic Patterns | Selective | 915 | 0.528 | **1** | 1 | 3 | 1 | +3.44 · +2.77 · +4.13 | +4.8 (265) |
+| CHoCH | Volume | 6,780 | 0.535 | **1** | — | 2 | 2 | +2.06 · +1.98 · -0.02 | +9.0 (1884) |
+| CHoCH | Balanced | 2,173 | 0.533 | **1** | — | 3 | 2 | +1.34 · +0.97 · +2.25 | +18.9 (618) |
+| CHoCH | Selective | 1,061 | 0.530 | **1** | — | 2 | 2 | +2.05 · +2.64 · +0.36 | -15.2 (319) |
+| Momentum Indicators | Volume | 9,736 | 0.525 | **1** | — | 2 | 5 | +4.66 · +4.17 · +2.52 | -6.1 (2600) |
+| Momentum Indicators | Balanced | 4,168 | 0.524 | **1** | 1 | 1 | 1 | +12.30 · +3.80 · +0.68 | +40.0 (1088) |
+| Momentum Indicators | Selective | 504 | 0.517 | **1** | 1 | 1 | 1 | +9.35 · +5.48 · +4.35 | +22.8 (148) |
+| Elliott Wave | Volume | 2,175 | 0.524 | — | — | 3 | — | -0.69 · -0.44 · +1.00 | — |
+| Elliott Wave | Balanced | 1,410 | 0.528 | — | — | 2 | — | +0.43 · +0.36 · +0.33 | — |
+| Elliott Wave | Selective | 377 | 0.526 | **1** | — | 1 | 1 | +1.28 · +0.16 · +1.31 | +2.0 (126) |
+| Elliott Wave | Hi Hit | 113 | 0.508 | **1** | 1 | 1 | — | +4.24 · +2.18 · +2.41 | -1.1 (29) |
+| Elliott Wave | Volume - 2yr Train | 1,919 | 0.533 | **1** | — | 1 | 1 | +1.03 · -0.47 · +1.49 | +29.3 (587) |
+| Elliott Wave | Balanced - 2yr Train | 815 | 0.533 | **1** | 1 | 1 | 1 | +2.07 · +1.40 · +2.22 | +30.5 (227) |
+| Renko | Volume | 905 | 0.523 | — | — | 1 | 1 | +1.60 · +1.30 · +0.91 | — |
+| Renko | Balanced | 559 | 0.524 | — | — | 1 | — | +1.14 · +2.41 · +2.04 | — |
+| Renko | Selective | 126 | 0.525 | **1** | 1 | 1 | — | +1.07 · +0.17 · +0.02 | +14.9 (29) |
+| Renko | Hi Hit | 91 | 0.533 | — | — | — | — | -0.01 · -0.10 · -0.43 | — |
+| Renko | Volume - 2yr Train | 1,732 | 0.530 | **2** | — | 4 | 2 | +1.94 · +2.05 · +0.66 | +31.3 (436) |
+| Renko | Balanced - 2yr Train | 736 | 0.526 | — | — | 1 | 1 | +1.25 · +2.55 · +2.11 | — |
+| Trend Lines | Line Break Volume | 5,143 | 0.529 | — | — | 2 | 3 | +0.04 · -0.01 · +0.56 | — |
+| Trend Lines | Line Break Balanced | 4,171 | 0.532 | — | — | 3 | 1 | -0.52 · +0.00 · +0.20 | — |
+| Support & Resistance | Level Break Volume | 10,230 | 0.529 | — | — | 2 | 3 | +0.07 · +0.66 · +1.02 | — |
+| Support & Resistance | Level Break Confirmed | 3,872 | 0.526 | — | — | 3 | — | +0.08 · -0.11 · -0.46 | — |
+| Gann Angles | Volume | 8,568 | 0.533 | **1** | — | 1 | 3 | +2.49 · +0.94 · +0.73 | +4.8 (2305) |
+| Gann Angles | Balanced | 5,372 | 0.536 | **1** | — | 2 | 1 | +2.67 · +1.82 · -0.38 | +45.9 (1467) |
+| Gann Angles | Selective | 2,590 | 0.534 | — | — | 1 | 2 | +0.59 · +0.16 · -0.34 | — |
+| Gann Angles | Angled Fan | 45,900 | 0.512 | — | — | 4 | — | -0.95 · -0.93 · -0.88 | — |
+| Oscillators | Volume | 15,747 | 0.522 | **1** | — | 2 | — | +1.68 · +1.46 · +0.91 | -94.0 (4125) |
+| Oscillators | Balanced | 5,005 | 0.532 | **1** | 1 | 1 | 1 | +3.07 · +0.33 · +0.70 | +51.1 (1504) |
+| Oscillators | Selective | 1,284 | 0.537 | **1** | 1 | 1 | 1 | +1.88 · -0.82 · -0.76 | +10.8 (392) |
+
+Caveats. The `2yr Train` presets were fitted on exactly this span, so their
+two-year numbers are in-sample (the rung structure is not what they were fitted
+on, but the hit rate is); 2023-24 and the real window are the clean checks for
+them. The proxy fill is constant per preset, so it understates rungs 2+ by
+~1c — the +1c column is the fairer read for any depth above 1. Sessions and
+entry filters were left out on purpose; this is the depth question alone.
 
 ## Adding another strategy
 

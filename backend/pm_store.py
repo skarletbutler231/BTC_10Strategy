@@ -122,8 +122,22 @@ def quote_at(window_start_ts: int, elapsed: int) -> "dict | None":
 _L2_COLS = ("time, bid, ask, mid, bid_sz, ask_sz, "
             "bid_d1, ask_d1, bid_d5, ask_d5, bid_d10, ask_d10, n_events")
 
+# series -> (market, quote, book) tables. '15m' is PMData's btc-15m series, kept
+# in its own tables because both key on the window start_ts (see db.py). Every L2
+# reader below takes `series`; the default keeps existing 5m callers unchanged.
+_L2_TABLES = {
+    "5m": ("pm_l2_market", "pm_l2_quote", "pm_l2_book"),
+    "15m": ("pm_l2_market_15m", "pm_l2_quote_15m", "pm_l2_book_15m"),
+}
 
-def l2_coverage() -> dict:
+
+def _l2_tables(series: str) -> "tuple[str, str, str]":
+    if series not in _L2_TABLES:
+        raise ValueError(f"unknown L2 series {series!r}; use one of {sorted(_L2_TABLES)}")
+    return _L2_TABLES[series]
+
+
+def l2_coverage(series: str = "5m") -> dict:
     """Coverage counts for the L2 data.
 
     ``resolved_feed`` are outcomes the exchange feed reported; ``resolved_terminal``
@@ -131,6 +145,7 @@ def l2_coverage() -> dict:
     ``market_resolved`` before ~2026-03-28. Keep them apart when the distinction
     matters — see ``backend.data.ingest_pmdata.derive_outcomes``.
     """
+    market, quote, book = _l2_tables(series)
     empty = {"windows": 0, "resolved": 0, "resolved_feed": 0, "resolved_terminal": 0,
              "quotes": 0, "books": 0, "first_ts": None, "last_ts": None, "days": 0}
     try:
@@ -141,10 +156,11 @@ def l2_coverage() -> dict:
         m = conn.execute(
             "SELECT COUNT(*) n, SUM(resolved_up IS NOT NULL) r, "
             "SUM(resolved_src='feed') rf, SUM(resolved_src='terminal') rt, "
-            "MIN(start_ts) lo, MAX(start_ts) hi FROM pm_l2_market").fetchone()
-        q = conn.execute("SELECT COUNT(*) n FROM pm_l2_quote").fetchone()
-        b = conn.execute("SELECT COUNT(*) n FROM pm_l2_book").fetchone()
-        d = conn.execute("SELECT COUNT(*) n FROM pmdata_day").fetchone()
+            f"MIN(start_ts) lo, MAX(start_ts) hi FROM {market}").fetchone()
+        q = conn.execute(f"SELECT COUNT(*) n FROM {quote}").fetchone()
+        b = conn.execute(f"SELECT COUNT(*) n FROM {book}").fetchone()
+        d = conn.execute("SELECT COUNT(*) n FROM pmdata_day WHERE series=?",
+                         (f"btc-{series}",)).fetchone()
         return {"windows": m["n"], "resolved": m["r"] or 0,
                 "resolved_feed": m["rf"] or 0, "resolved_terminal": m["rt"] or 0,
                 "quotes": q["n"], "books": b["n"],
@@ -155,7 +171,7 @@ def l2_coverage() -> dict:
         conn.close()
 
 
-def l2_quotes(window_start_ts: int) -> "list[dict]":
+def l2_quotes(window_start_ts: int, series: str = "5m") -> "list[dict]":
     """Every per-second book state for one window, ascending, with `elapsed`."""
     try:
         conn = db.connect(readonly=True)
@@ -163,14 +179,14 @@ def l2_quotes(window_start_ts: int) -> "list[dict]":
         return []
     try:
         rows = conn.execute(
-            f"SELECT {_L2_COLS} FROM pm_l2_quote WHERE start_ts=? ORDER BY time",
+            f"SELECT {_L2_COLS} FROM {_l2_tables(series)[1]} WHERE start_ts=? ORDER BY time",
             (window_start_ts,)).fetchall()
         return [{**dict(r), "elapsed": r["time"] - window_start_ts} for r in rows]
     finally:
         conn.close()
 
 
-def l2_quote_at(window_start_ts: int, elapsed: int) -> "dict | None":
+def l2_quote_at(window_start_ts: int, elapsed: int, series: str = "5m") -> "dict | None":
     """Book state at/just before `elapsed` seconds into the window.
 
     Rows exist only for seconds in which the book actually changed, so this
@@ -182,7 +198,7 @@ def l2_quote_at(window_start_ts: int, elapsed: int) -> "dict | None":
         return None
     try:
         r = conn.execute(
-            f"SELECT {_L2_COLS} FROM pm_l2_quote "
+            f"SELECT {_L2_COLS} FROM {_l2_tables(series)[1]} "
             "WHERE start_ts=? AND time<=? ORDER BY time DESC LIMIT 1",
             (window_start_ts, window_start_ts + int(elapsed))).fetchone()
         return {**dict(r), "elapsed": r["time"] - window_start_ts} if r else None
@@ -190,7 +206,7 @@ def l2_quote_at(window_start_ts: int, elapsed: int) -> "dict | None":
         conn.close()
 
 
-def l2_book_at(window_start_ts: int, elapsed: int) -> "dict | None":
+def l2_book_at(window_start_ts: int, elapsed: int, series: str = "5m") -> "dict | None":
     """Full ladder at/just before `elapsed` seconds in.
 
     Returns ``{time, elapsed, bids, asks}`` where each side is a list of
@@ -202,7 +218,7 @@ def l2_book_at(window_start_ts: int, elapsed: int) -> "dict | None":
         return None
     try:
         r = conn.execute(
-            "SELECT time, ladder FROM pm_l2_book "
+            f"SELECT time, ladder FROM {_l2_tables(series)[2]} "
             "WHERE start_ts=? AND time<=? ORDER BY time DESC LIMIT 1",
             (window_start_ts, window_start_ts + int(elapsed))).fetchone()
         if not r:
@@ -219,7 +235,7 @@ def l2_book_at(window_start_ts: int, elapsed: int) -> "dict | None":
 
 
 def l2_fill(window_start_ts: int, elapsed: int, shares: float,
-            side: str = "buy") -> "dict | None":
+            side: str = "buy", series: str = "5m") -> "dict | None":
     """Walk the resting book to price a market order of `shares`.
 
     ``side='buy'`` lifts the ask ladder, ``'sell'`` hits the bid ladder. This is
@@ -228,7 +244,7 @@ def l2_fill(window_start_ts: int, elapsed: int, shares: float,
     thin. Returns ``{avg_price, filled, unfilled, worst_price, levels, top}``;
     ``avg_price`` is None if nothing could be filled at all.
     """
-    book = l2_book_at(window_start_ts, elapsed)
+    book = l2_book_at(window_start_ts, elapsed, series)
     if not book:
         return None
     levels = book["asks"] if side == "buy" else book["bids"]

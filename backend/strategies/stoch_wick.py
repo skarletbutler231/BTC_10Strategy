@@ -249,6 +249,53 @@ class StochWick(Strategy):
                 "ma_type": "EMA", "ma_length": 200,
                 "predict_direction": "Reversion",
             },
+            # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+            # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+            # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+            # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+            # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+            # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+            # train z >= 2.5; the pick is the best train hit rate less one standard error.
+            # Flat $1 per bet, next-candle direction:
+            #
+            #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+            #   Volume     4,878  58.86% +12.4 |  3,065  59.41% | 58.05% (61.7/55.3)   552  57.61% | 52.1% (2017)
+            #   Balanced   3,155  58.54%  +9.6 |  2,113  58.54% | 60.11% (62.2/58.4)   305  54.75% | 50.6% (2017)
+            #   Selective  1,885  59.89%  +8.6 |  1,286  59.64% | 60.66% (60.4/60.9)   172  59.88% | 56.7% (2018)
+            #
+            # Reversion of a 5-bar %K extreme (90/10 with a 3-bar %D, or 95/5 raw) is the
+            # engine on 15m - the 5m shape with the stochastic shortened to a third. The
+            # rejection-wick filter is off in two of the three (0.1 in Selective).
+            # Balanced is the weak one: 60.11% train falls to 54.75% on 305 holdout bets,
+            # and its first half (62.2%) carried its second (58.4%). Volume and Selective
+            # replicate (57.6% / 59.9% holdout).
+            # *** THE PICK. *** ADX < 25 on, no trend gate; 4,878 bets at 58.86% over the
+            # whole record, 59.41% on the unswept years.
+            "PM 15m Volume": {
+                "adx_length": 14, "adx_max": 25, "atr_pct_max": 20.0,
+                "atr_pct_min": 0.0, "min_close_recovery": 0.0,
+                "min_wick_ratio": 0.0, "overbought": 90, "oversold": 10,
+                "predict_direction": "Reversion", "stoch_d_length": 3,
+                "stoch_k_length": 5, "use_adx_filter": True,
+                "use_trend_filter": False,
+            },
+            "PM 15m Balanced": {
+                "adx_length": 14, "adx_max": 25, "atr_pct_max": 3.0,
+                "atr_pct_min": 0.1, "ma_length": 200, "ma_type": "EMA",
+                "min_close_recovery": 0.0, "min_wick_ratio": 0.0, "overbought": 90,
+                "oversold": 10, "predict_direction": "Reversion",
+                "stoch_d_length": 3, "stoch_k_length": 5,
+                "trend_logic": "Against Trend", "use_adx_filter": True,
+                "use_trend_filter": True,
+            },
+            "PM 15m Selective": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "ma_length": 200,
+                "ma_type": "EMA", "min_close_recovery": 0.0, "min_wick_ratio": 0.1,
+                "overbought": 95, "oversold": 5, "predict_direction": "Reversion",
+                "stoch_d_length": 1, "stoch_k_length": 5,
+                "trend_logic": "Against Trend", "use_adx_filter": False,
+                "use_trend_filter": True,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

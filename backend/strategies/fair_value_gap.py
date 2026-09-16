@@ -260,3 +260,45 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    12,728  54.23%  +9.6 |  8,946  54.63% | 53.69% (53.0/54.3) 1,506  52.72% | 51.0% (2022)
+    #   Balanced   3,221  54.55%  +5.2 |  2,339  54.30% | 56.40% (54.0/58.5)   366  53.55% | 51.3% (2017)
+    #   Selective  1,333  55.36%  +3.9 |    971  53.96% | 59.72% (57.3/61.7)   151  58.28% | 47.7% (2021)
+    #
+    # The weakest family on 15m. Continuation on the gap retest, as on 5m, but
+    # Volume is 53.69% train -> 52.72% holdout on 1,506 bets and Balanced 53.55%:
+    # real (z +9.6 over the whole record) and thin. Only Selective (a >= 1 ATR
+    # gap entered at 25% depth, against-trend EMA200, 0.5 impulse body) clears
+    # 58% out of sample, on 151 bets. Shipped for the record; not a book to run.
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "entry_depth": 0.75,
+        "max_gap_age_bars": 200, "min_gap_atr_mult": 0.5,
+        "min_impulse_body_ratio": 0.0, "predict_direction": "Continuation",
+        "require_reaction": False, "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "entry_depth": 0.5,
+        "max_gap_age_bars": 100, "min_gap_atr_mult": 1.0,
+        "min_impulse_body_ratio": 0.0, "predict_direction": "Continuation",
+        "require_reaction": False, "use_trend_filter": False,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "entry_depth": 0.25,
+        "ma_length": 200, "ma_type": "EMA", "max_gap_age_bars": 200,
+        "min_gap_atr_mult": 1.0, "min_impulse_body_ratio": 0.5,
+        "predict_direction": "Continuation", "require_reaction": False,
+        "trend_logic": "Against Trend", "use_trend_filter": True,
+    },
+})

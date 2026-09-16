@@ -243,6 +243,52 @@ class ZScoreMS(Strategy):
                 "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
                 "source": "close",
             },
+            # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+            # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+            # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+            # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+            # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+            # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+            # train z >= 2.5; the pick is the best train hit rate less one standard error.
+            # Flat $1 per bet, next-candle direction:
+            #
+            #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+            #   Volume    10,195  58.95% +18.1 |  7,918  59.12% | 58.26% (57.3/59.2)   849  58.54% | 50.3% (2017)
+            #   Balanced   5,146  58.43% +12.1 |  3,927  58.37% | 59.32% (59.3/59.3)   457  57.55% | 50.0% (2017)
+            #   Selective  1,740  59.25%  +7.7 |  1,357  58.95% | 62.96% (61.3/64.8)   167  56.89% | 56.2% (2026)
+            #
+            # Reversion of a +-2 sigma z-score confirmed by a Keltner break, with the
+            # EMA200 bias-slope filter on in every tier and no trend-MA gate. Only the z
+            # window changes across tiers: 20 / 50 / 100 bars.
+            # *** THE PICK. *** 58.26% train -> 58.54% holdout on 849 bets, no shrinkage,
+            # 59.12% on the unswept years.
+            "PM 15m Volume": {
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "kc_atr_length": 20, "kc_ema_length": 20, "kc_mult": 1.0,
+                "predict_direction": "Reversion", "require_kc_break": True,
+                "use_bias_ma": True, "use_trend_filter": False,
+                "vol_atr_length": 14, "vol_max_atr_pct": 3.0,
+                "vol_min_atr_pct": 0.1, "z_lower": -2.0, "z_sma_length": 20,
+                "z_std_length": 20, "z_upper": 2.0,
+            },
+            "PM 15m Balanced": {
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "kc_atr_length": 20, "kc_ema_length": 20, "kc_mult": 1.5,
+                "predict_direction": "Reversion", "require_kc_break": True,
+                "use_bias_ma": True, "use_trend_filter": False,
+                "vol_atr_length": 14, "vol_max_atr_pct": 3.0,
+                "vol_min_atr_pct": 0.1, "z_lower": -2.0, "z_sma_length": 50,
+                "z_std_length": 50, "z_upper": 2.0,
+            },
+            "PM 15m Selective": {
+                "bias_ema_length": 200, "bias_slope_lookback": 5,
+                "kc_atr_length": 20, "kc_ema_length": 20, "kc_mult": 1.0,
+                "predict_direction": "Reversion", "require_kc_break": True,
+                "use_bias_ma": True, "use_trend_filter": False,
+                "vol_atr_length": 14, "vol_max_atr_pct": 20.0,
+                "vol_min_atr_pct": 0.0, "z_lower": -2.0, "z_sma_length": 100,
+                "z_std_length": 100, "z_upper": 2.0,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

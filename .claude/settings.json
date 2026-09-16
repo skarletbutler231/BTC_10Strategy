@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(timeout 3000 python3 cstage2.py)",
+      "Bash(timeout 3000 python3 cvalidate.py)",
+      "Bash(timeout 3000 python3 cverify.py)"
+    ]
+  }
+}

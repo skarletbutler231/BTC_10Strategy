@@ -575,3 +575,55 @@ PRESETS: dict = {
         "ma_type": "EMA", "ma_length": 200, "source": "close",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     8,298  58.72% +15.9 |  5,978  59.02% | 57.19% (57.6/56.7)   811  59.43% | 52.8% (2017)
+    #   Balanced   2,837  59.01%  +9.6 |  2,058  59.18% | 60.90% (62.5/59.3)   270  54.07% | 54.9% (2026)
+    #   Selective  1,319  61.79%  +8.6 |    879  61.55% | 60.63% (61.9/59.1)   153  65.36% | 57.1% (2018)
+    #
+    # Renko bricks are path-dependent - the ladder is built from the first loaded
+    # bar - so exact counts move a few bets with the loaded start. The table is
+    # the whole-record run; the sweep-window run read Volume 57.83% -> 59.24%,
+    # Balanced 60.93% -> 51.88%, Selective 63.70% -> 62.14%.
+    # Volume and Selective fade ANY new brick after a 2-brick reversal (1 ATR /
+    # 2 ATR bricks) inside a 0.15-1.0 ATR% band with a with-trend EMA200 gate, and
+    # both hold: 59.4% and 65.4% holdout. Balanced (Brick Run, 0.5 ATR bricks) is
+    # the one that does not - 54.1% holdout here, 51.9% in the sweep run. NOT
+    # RECOMMENDED.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_length": 14, "atr_pct_max": 1.0, "atr_pct_min": 0.15,
+        "brick_atr_mult": 1.0, "brick_mode": "ATR", "ma_length": 200,
+        "ma_type": "EMA", "max_new_bricks": 0, "min_run_bricks": 2,
+        "predict_direction": "Fade Brick", "reversal_bricks": 2,
+        "trend_logic": "With Trend", "trigger": "Any New Brick",
+        "use_trend_filter": True,
+    },
+    "PM 15m Balanced": {
+        "atr_length": 14, "atr_pct_max": 1.0, "atr_pct_min": 0.15,
+        "brick_atr_mult": 0.5, "brick_mode": "ATR", "ma_length": 200,
+        "ma_type": "EMA", "max_new_bricks": 1, "min_run_bricks": 3,
+        "predict_direction": "Fade Brick", "reversal_bricks": 2,
+        "trend_logic": "With Trend", "trigger": "Brick Run",
+        "use_trend_filter": True,
+    },
+    "PM 15m Selective": {
+        "atr_length": 14, "atr_pct_max": 1.0, "atr_pct_min": 0.15,
+        "brick_atr_mult": 2.0, "brick_mode": "ATR", "ma_length": 200,
+        "ma_type": "EMA", "max_new_bricks": 1, "min_run_bricks": 2,
+        "predict_direction": "Fade Brick", "reversal_bricks": 2,
+        "trend_logic": "With Trend", "trigger": "Any New Brick",
+        "use_trend_filter": True,
+    },
+})

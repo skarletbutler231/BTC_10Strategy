@@ -401,3 +401,49 @@ PRESETS: dict = {
         "predict_direction": "Reversion",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    17,201  56.35% +16.6 | 12,460  56.11% | 55.33% (55.4/55.2) 1,775  59.72% | 52.0% (2017)
+    #   Balanced   4,697  56.82%  +9.4 |  3,411  56.11% | 56.98% (56.3/57.6)   484  61.57% | 52.0% (2017)
+    #   Selective  1,717  54.34%  +3.6 |  1,263  52.26% | 59.92% (58.3/61.6)   197  60.41% | 38.8% (2017)
+    #
+    # Every tier IMPROVES into the holdout (55.3 -> 59.7, 57.0 -> 61.6, 59.9 ->
+    # 60.4%): the 2026 tape is the best this strategy has seen. All three fade a
+    # 1.5-2.5x volume spike with no rank filter (vol_rank_min 0); the 5m presets'
+    # against-trend SMA100 gate is replaced by with-trend EMA200 or nothing.
+    # Selective's whole-record 54.34% is dragged down by 2017 (38.8%, small
+    # sample) and the unswept years (52.3%): treat it as a 2024-26 result only.
+    # *** THE PICK. *** 17,201 bets over the whole record at 56.35% (z +16.6);
+    # 1,775 holdout bets at 59.72%.
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "min_body_ratio": 0.6,
+        "predict_direction": "Reversion", "use_trend_filter": False,
+        "vol_atr_length": 50, "vol_ma_length": 10, "vol_rank_lookback": 500,
+        "vol_rank_min": 0, "vol_spike_mult": 1.5, "wick_min": 0.0,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.15, "ma_length": 200, "ma_type": "EMA",
+        "min_body_ratio": 0.6, "predict_direction": "Reversion",
+        "trend_logic": "With Trend", "use_trend_filter": True, "vol_atr_length": 50,
+        "vol_ma_length": 10, "vol_rank_lookback": 500, "vol_rank_min": 0,
+        "vol_spike_mult": 1.5, "wick_min": 0.0,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 2.0, "atr_pct_min": 0.15, "ma_length": 200, "ma_type": "EMA",
+        "min_body_ratio": 0.2, "predict_direction": "Reversion",
+        "trend_logic": "With Trend", "use_trend_filter": True, "vol_atr_length": 50,
+        "vol_ma_length": 10, "vol_rank_lookback": 500, "vol_rank_min": 0,
+        "vol_spike_mult": 2.5, "wick_min": 0.0,
+    },
+})

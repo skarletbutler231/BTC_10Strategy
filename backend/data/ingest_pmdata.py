@@ -10,6 +10,11 @@ market's L2 event stream onto a **1-second grid**:
   * ``pm_l2_market`` — per-window metadata and the feed's own resolution.
   * ``pmdata_day``   — which archives have been folded in, so re-runs skip them.
 
+Two series: ``btc-5m`` (the default) folds into the tables above, ``btc-15m``
+into ``pm_l2_quote_15m`` / ``pm_l2_book_15m`` / ``pm_l2_market_15m``. They are
+kept apart because the tables key on the window's ``start_ts`` alone, and a 15m
+window shares its start_ts with the 5m window that opens at the same moment.
+
 Why a 1-second grid and not the raw events: BTC 5m alone is ~30M L2 events a
 day, ~5 billion over the full history. The archives keep every event; SQLite
 keeps the per-second state that backtests actually query, and can be rebuilt at
@@ -28,6 +33,8 @@ Usage:
     python3 -m backend.data.ingest_pmdata --ingest-only     # fold what is already local
     python3 -m backend.data.ingest_pmdata --no-ladder       # skip pm_l2_book (~8 GB)
     python3 -m backend.data.ingest_pmdata --status          # coverage report, no work
+    python3 -m backend.data.ingest_pmdata --series btc-15m --dry-run   # days + quota cost, no download
+    python3 -m backend.data.ingest_pmdata --series btc-15m  # 15-minute markets, full history
 """
 
 from __future__ import annotations
@@ -51,9 +58,23 @@ from .. import db
 from ..pm_store import SIZE_SCALE, SLOTS, TICK, decode_ladder, encode_ladder  # noqa: F401
 from . import pmdata
 
-SERIES = "btc-5m"
 DATA_TYPE = "poly_l2"
-WINDOW_SEC = 300
+
+# series -> (window seconds, market / quote / book tables). The 15m series gets its
+# own tables; see the module docstring and the pm_l2_*_15m comment in db.py.
+SERIES_TABLES = {
+    "btc-5m": {"window": 300, "market": "pm_l2_market", "quote": "pm_l2_quote",
+               "book": "pm_l2_book"},
+    "btc-15m": {"window": 900, "market": "pm_l2_market_15m", "quote": "pm_l2_quote_15m",
+                "book": "pm_l2_book_15m"},
+}
+DEFAULT_SERIES = "btc-5m"
+
+
+def slug_prefix(series: str) -> str:
+    """'btc-15m' -> 'btc-updown-15m-', the slug every market in that archive carries."""
+    asset, tf = series.rsplit("-", 1)
+    return f"{asset}-updown-{tf}-"
 
 
 # ---- per-market fold --------------------------------------------------------
@@ -241,8 +262,10 @@ def fold_market(raw: bytes, *, want_ladder: bool = True) -> "tuple[dict, list, l
     return meta, quotes, books
 
 
-def fold_day(zip_path: str, day_str: str, want_ladder: bool = True) -> dict:
+def fold_day(zip_path: str, day_str: str, want_ladder: bool = True,
+             series: str = DEFAULT_SERIES) -> dict:
     """Fold every market in one day archive. Runs in a worker process."""
+    want_prefix = slug_prefix(series)
     metas: list = []
     quotes: list = []
     books: list = []
@@ -263,6 +286,11 @@ def fold_day(zip_path: str, day_str: str, want_ladder: bool = True) -> dict:
             if got is None:
                 continue
             meta, q, b = got
+            # The tables for a series assume its window length, so a market from
+            # another series must never be folded into them.
+            if not meta["slug"].startswith(want_prefix):
+                failed.append(f"{name}: slug {meta['slug']!r} is not {series}")
+                continue
             meta["data_date"] = day_str
             metas.append(meta)
             quotes.extend(q)
@@ -274,15 +302,19 @@ def fold_day(zip_path: str, day_str: str, want_ladder: bool = True) -> dict:
 
 # ---- writer -----------------------------------------------------------------
 
-_Q_SQL = ("INSERT OR REPLACE INTO pm_l2_quote (start_ts, time, bid, ask, mid, "
-          "bid_sz, ask_sz, bid_d1, ask_d1, bid_d5, ask_d5, bid_d10, ask_d10, n_events) "
-          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-_B_SQL = "INSERT OR REPLACE INTO pm_l2_book (start_ts, time, ladder) VALUES (?,?,?)"
-_M_SQL = ("INSERT OR REPLACE INTO pm_l2_market (start_ts, slug, first_ts, last_ts, "
-          "n_events, n_book, n_change, outcome, resolved_up, resolved_src, data_date) "
-          "VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+def _sql(series: str) -> "tuple[str, str, str]":
+    """(market, quote, book) INSERT statements for a series' tables."""
+    t = SERIES_TABLES[series]
+    q = (f"INSERT OR REPLACE INTO {t['quote']} (start_ts, time, bid, ask, mid, "
+         "bid_sz, ask_sz, bid_d1, ask_d1, bid_d5, ask_d5, bid_d10, ask_d10, n_events) "
+         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    b = f"INSERT OR REPLACE INTO {t['book']} (start_ts, time, ladder) VALUES (?,?,?)"
+    m = (f"INSERT OR REPLACE INTO {t['market']} (start_ts, slug, first_ts, last_ts, "
+         "n_events, n_book, n_change, outcome, resolved_up, resolved_src, data_date) "
+         "VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    return m, q, b
 
-# A 5m market's YES price converges to ~1.0 (UP) or ~0.0 (DOWN) as it settles,
+# An UP/DOWN market's YES price converges to ~1.0 (UP) or ~0.0 (DOWN) as it settles,
 # so the last two-sided quote implies the outcome. Measured against the feed's
 # own market_resolved events: this decides 97.9% of markets at 99.82% accuracy.
 # Only used where the feed gave no outcome at all — PMData did not record
@@ -309,25 +341,26 @@ def _write_chunked(conn, sql: str, rows: list) -> None:
         conn.commit()
 
 
-def write_day(conn, res: dict) -> None:
-    _write_chunked(conn, _M_SQL, [
+def write_day(conn, res: dict, series: str = DEFAULT_SERIES) -> None:
+    m_sql, q_sql, b_sql = _sql(series)
+    _write_chunked(conn, m_sql, [
         (m["start_ts"], m["slug"], m["first_ts"], m["last_ts"], m["n_events"],
          m["n_book"], m["n_change"], m["outcome"], m["resolved_up"],
          "feed" if m["resolved_up"] is not None else None, m["data_date"])
         for m in res["metas"]])
-    _write_chunked(conn, _Q_SQL, res["quotes"])
-    _write_chunked(conn, _B_SQL, res["books"])
+    _write_chunked(conn, q_sql, res["quotes"])
+    _write_chunked(conn, b_sql, res["books"])
     # Written last: it is the marker that says this day is complete, and every
     # insert above is INSERT OR REPLACE, so an interrupted day just re-folds.
     conn.execute(
         "INSERT OR REPLACE INTO pmdata_day (series, data_type, data_date, markets, "
         "events, sec_rows, zip_bytes, loaded_at) VALUES (?,?,?,?,?,?,?,?)",
-        (SERIES, DATA_TYPE, res["day"], len(res["metas"]), res["events"],
+        (series, DATA_TYPE, res["day"], len(res["metas"]), res["events"],
          len(res["quotes"]), res["zip_bytes"], int(time.time())))
     conn.commit()
 
 
-def derive_outcomes(conn) -> dict:
+def derive_outcomes(conn, series: str = DEFAULT_SERIES) -> dict:
     """Fill in outcomes the feed never reported, from the settled book.
 
     Idempotent, and never touches a window the feed resolved: only rows with a
@@ -335,37 +368,44 @@ def derive_outcomes(conn) -> dict:
     ``resolved_src='terminal'`` so a caller can always exclude derived labels
     with ``WHERE resolved_src='feed'``.
     """
+    t = SERIES_TABLES[series]
     # Any pre-existing resolution came from a market_resolved event.
-    conn.execute("UPDATE pm_l2_market SET resolved_src='feed' "
+    conn.execute(f"UPDATE {t['market']} SET resolved_src='feed' "
                  "WHERE resolved_up IS NOT NULL AND resolved_src IS NULL")
     # Last two-sided quote per unresolved window.
     rows = conn.execute(
         "SELECT m.start_ts, ("
-        "  SELECT q.mid FROM pm_l2_quote q "
+        f"  SELECT q.mid FROM {t['quote']} q "
         "  WHERE q.start_ts = m.start_ts AND q.bid IS NOT NULL AND q.ask IS NOT NULL "
         "  ORDER BY q.time DESC LIMIT 1) AS term_mid "
-        "FROM pm_l2_market m WHERE m.resolved_up IS NULL").fetchall()
+        f"FROM {t['market']} m WHERE m.resolved_up IS NULL").fetchall()
     upd = [(1 if r["term_mid"] >= SETTLE_HI else 0, r["start_ts"])
            for r in rows
            if r["term_mid"] is not None
            and (r["term_mid"] >= SETTLE_HI or r["term_mid"] <= SETTLE_LO)]
     if upd:
-        conn.executemany("UPDATE pm_l2_market SET resolved_up=?, resolved_src='terminal' "
+        conn.executemany(f"UPDATE {t['market']} SET resolved_up=?, resolved_src='terminal' "
                          "WHERE start_ts=?", upd)
     conn.commit()
     return {"candidates": len(rows), "derived": len(upd),
             "undetermined": len(rows) - len(upd)}
 
 
-def loaded_days(conn) -> "set[str]":
+def loaded_days(conn, series: str = DEFAULT_SERIES) -> "set[str]":
     return {r[0] for r in conn.execute(
         "SELECT data_date FROM pmdata_day WHERE series=? AND data_type=?",
-        (SERIES, DATA_TYPE))}
+        (series, DATA_TYPE))}
 
 
 # ---- orchestration ----------------------------------------------------------
 
-def download_all(days: "list[date]", *, force: bool = False) -> "list[date]":
+def to_download(days: "list[date]", series: str, *, force: bool = False) -> "list[date]":
+    """The days a download run would actually fetch (and pay quota for)."""
+    return [d for d in days if force or not pmdata.day_file(series, DATA_TYPE, d).exists()]
+
+
+def download_all(days: "list[date]", series: str = DEFAULT_SERIES, *,
+                 force: bool = False) -> "list[date]":
     """Fetch every missing archive, sequentially. Returns the days now on disk."""
     have = []
     s = requests.Session()
@@ -373,7 +413,11 @@ def download_all(days: "list[date]", *, force: bool = False) -> "list[date]":
     got_bytes = 0
     for i, d in enumerate(days, 1):
         try:
-            r = pmdata.download_day(SERIES, DATA_TYPE, d, force=force, session=s)
+            r = pmdata.download_day(series, DATA_TYPE, d, force=force, session=s)
+        except pmdata.PMDataQuotaError as e:
+            # Every later day would 429 the same way; say so once and stop.
+            print(f"  [{i}/{len(days)}] {d} STOPPED: {e}", flush=True)
+            break
         except pmdata.PMDataError as e:
             print(f"  [{i}/{len(days)}] {d} FAILED: {e}", flush=True)
             continue
@@ -389,20 +433,20 @@ def download_all(days: "list[date]", *, force: bool = False) -> "list[date]":
     return have
 
 
-def ingest_all(days: "list[date]", *, workers: int, want_ladder: bool,
-               db_path=None, redo: bool = False) -> dict:
+def ingest_all(days: "list[date]", series: str = DEFAULT_SERIES, *, workers: int,
+               want_ladder: bool, db_path=None, redo: bool = False) -> dict:
     conn = db.connect(db_path)
     try:
-        done = set() if redo else loaded_days(conn)
+        done = set() if redo else loaded_days(conn, series)
         todo = [d for d in days
-                if f"{d:%Y-%m-%d}" not in done and pmdata.day_file(SERIES, DATA_TYPE, d).exists()]
+                if f"{d:%Y-%m-%d}" not in done and pmdata.day_file(series, DATA_TYPE, d).exists()]
         if not todo:
             print("nothing to fold: every requested day is already in the DB.", flush=True)
             return {"days": 0, "quotes": 0, "books": 0, "events": 0}
 
         print(f"Folding {len(todo)} day(s) with {workers} worker(s) -> "
               f"{db_path or db.db_path()}", flush=True)
-        jobs = [(str(pmdata.day_file(SERIES, DATA_TYPE, d)), f"{d:%Y-%m-%d}", want_ladder)
+        jobs = [(str(pmdata.day_file(series, DATA_TYPE, d)), f"{d:%Y-%m-%d}", want_ladder, series)
                 for d in todo]
 
         n_q = n_b = n_e = 0
@@ -411,7 +455,7 @@ def ingest_all(days: "list[date]", *, workers: int, want_ladder: bool,
         # imap (ordered) keeps writes chronological, so both B-trees stay append-only.
         with mp.get_context("fork").Pool(workers) as pool:
             for i, res in enumerate(pool.imap(_fold_star, jobs), 1):
-                write_day(conn, res)
+                write_day(conn, res, series)
                 n_q += len(res["quotes"])
                 n_b += len(res["books"])
                 n_e += res["events"]
@@ -439,34 +483,35 @@ def _fold_star(a):
     return fold_day(*a)
 
 
-def status(db_path=None) -> None:
+def status(db_path=None, series: str = DEFAULT_SERIES) -> None:
+    t = SERIES_TABLES[series]
     files, nbytes = pmdata.archive_size()
     print(f"archive : {pmdata.archive_root()}")
     print(f"          {files} zip(s), {nbytes/1e9:.1f} GB")
-    local = pmdata.local_days(SERIES, DATA_TYPE)
+    local = pmdata.local_days(series, DATA_TYPE)
     if local:
-        print(f"          {SERIES}/{DATA_TYPE}: {len(local)} day(s) {local[0]} .. {local[-1]}")
+        print(f"          {series}/{DATA_TYPE}: {len(local)} day(s) {local[0]} .. {local[-1]}")
     conn = db.connect(db_path)
     try:
         d = conn.execute("SELECT COUNT(*) n, MIN(data_date) lo, MAX(data_date) hi, "
                          "SUM(events) e FROM pmdata_day WHERE series=? AND data_type=?",
-                         (SERIES, DATA_TYPE)).fetchone()
+                         (series, DATA_TYPE)).fetchone()
         m = conn.execute("SELECT COUNT(*) n, SUM(resolved_up IS NOT NULL) r, "
                          "SUM(resolved_src='feed') rf, SUM(resolved_src='terminal') rt, "
-                         "MIN(start_ts) lo, MAX(start_ts) hi FROM pm_l2_market").fetchone()
-        q = conn.execute("SELECT COUNT(*) n FROM pm_l2_quote").fetchone()
-        b = conn.execute("SELECT COUNT(*) n FROM pm_l2_book").fetchone()
+                         f"MIN(start_ts) lo, MAX(start_ts) hi FROM {t['market']}").fetchone()
+        q = conn.execute(f"SELECT COUNT(*) n FROM {t['quote']}").fetchone()
+        b = conn.execute(f"SELECT COUNT(*) n FROM {t['book']}").fetchone()
         print(f"db      : {db_path or db.db_path()}")
         print(f"          pmdata_day   {d['n']} day(s) {d['lo']} .. {d['hi']}, "
               f"{(d['e'] or 0)/1e9:.2f}B events folded")
         if m["n"]:
             lo = datetime.fromtimestamp(m["lo"], timezone.utc)
             hi = datetime.fromtimestamp(m["hi"], timezone.utc)
-            print(f"          pm_l2_market {m['n']:,} windows, {m['r'] or 0:,} resolved "
+            print(f"          {t['market']} {m['n']:,} windows, {m['r'] or 0:,} resolved "
                   f"({m['rf'] or 0:,} feed / {m['rt'] or 0:,} terminal) "
                   f"({lo:%Y-%m-%d %H:%M} .. {hi:%Y-%m-%d %H:%M} UTC)")
-        print(f"          pm_l2_quote  {q['n']:,} rows")
-        print(f"          pm_l2_book   {b['n']:,} rows")
+        print(f"          {t['quote']}  {q['n']:,} rows")
+        print(f"          {t['book']}   {b['n']:,} rows")
     finally:
         conn.close()
 
@@ -474,6 +519,10 @@ def status(db_path=None) -> None:
 def _cli(argv=None):
     ap = argparse.ArgumentParser(
         description="Backfill Polymarket price + L2 order book history from PMData.")
+    ap.add_argument("--series", default=DEFAULT_SERIES, choices=sorted(SERIES_TABLES),
+                    help="PMData UpDown series (default btc-5m)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="list the days a run would download and their quota cost, then exit")
     ap.add_argument("--from", dest="start", default=None, help="first day (YYYY-MM-DD)")
     ap.add_argument("--to", dest="end", default=None, help="last day (YYYY-MM-DD)")
     ap.add_argument("--workers", type=int, default=max(1, min(12, (os.cpu_count() or 4) - 2)))
@@ -488,27 +537,37 @@ def _cli(argv=None):
     ap.add_argument("--db", default=None, help="override DB path")
     args = ap.parse_args(argv)
 
+    series = args.series
     if args.status:
-        status(args.db)
+        status(args.db, series)
         return 0
 
     start = date.fromisoformat(args.start) if args.start else None
     end = date.fromisoformat(args.end) if args.end else None
-    days = pmdata.day_range(SERIES, start, end)
+    days = pmdata.day_range(series, start, end)
     if not days:
         print("empty day range.", file=sys.stderr)
         return 1
-    print(f"{SERIES}/{DATA_TYPE}: {len(days)} day(s) {days[0]} .. {days[-1]}", flush=True)
+    print(f"{series}/{DATA_TYPE}: {len(days)} day(s) {days[0]} .. {days[-1]}", flush=True)
+
+    fetch = [] if args.ingest_only else to_download(days, series, force=args.force_download)
+    cost = pmdata.quota_cost(series, len(fetch))
+    print(f"download: {len(fetch)} archive(s) not on disk"
+          + (f" -> {cost:,} PMData quota units" if cost is not None else ""), flush=True)
+    if args.dry_run:
+        if fetch:
+            print(f"          {fetch[0]} .. {fetch[-1]}")
+        return 0
 
     if not args.ingest_only:
         print(f"\n== download -> {pmdata.archive_root()}", flush=True)
-        download_all(days, force=args.force_download)
+        download_all(days, series, force=args.force_download)
     if args.download_only:
-        status(args.db)
+        status(args.db, series)
         return 0
 
     print("\n== fold into SQLite", flush=True)
-    r = ingest_all(days, workers=args.workers, want_ladder=not args.no_ladder,
+    r = ingest_all(days, series, workers=args.workers, want_ladder=not args.no_ladder,
                    db_path=args.db, redo=args.redo)
     if r["days"]:
         print(f"\nDone in {r['secs']/60:.1f}m: {r['days']} day(s), "
@@ -518,7 +577,7 @@ def _cli(argv=None):
     if not args.no_derive:
         conn = db.connect(args.db)
         try:
-            d = derive_outcomes(conn)
+            d = derive_outcomes(conn, series)
         finally:
             conn.close()
         if d["candidates"]:
@@ -526,7 +585,7 @@ def _cli(argv=None):
                   f"derived from the settled book (resolved_src='terminal'); "
                   f"{d['undetermined']:,} left undetermined.", flush=True)
     print()
-    status(args.db)
+    status(args.db, series)
     return 0
 
 

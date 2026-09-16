@@ -647,3 +647,56 @@ PRESETS.update({
     # Best hit of the two and the better holdout; a 150-bar (2.5 h) left window.
     "PM 1m BOS Balanced": {**_BOS_1M_COMMON, "pivot_left": 150, "pivot_right": 1},
 })
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     6,283  56.69% +10.6 |  4,533  56.17% | 57.46% (57.7/57.2)   523  59.46% | 49.8% (2017)
+    #   Balanced   5,798  56.16%  +9.4 |  4,176  55.53% | 58.01% (58.4/57.6)   486  57.20% | 46.8% (2017)
+    #   Selective  1,444  58.38%  +6.4 |  1,009  57.88% | 61.00% (59.9/62.0)   135  56.30% | 52.1% (2019)
+    #
+    # Break of Structure traded as Continuation - i.e. FADE the break - wins
+    # every tier, as on 5m and 1m; the candlestick, double-top and divergence
+    # families never reached the frontier. pivot_left 30 (7.5 hours) with a
+    # 60-bar max gap; the ATR floor is 0.02%.
+    # Volume 57.46% train -> 59.46% holdout, Balanced 58.01% -> 57.20%. 2017
+    # reads 49.8% / 46.8%: the parabolic-run failure mode the 5m presets document.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.02, "max_pivot_gap": 60,
+        "min_confirmations": 1, "pivot_left": 30, "pivot_right": 2,
+        "predict_direction": "Continuation", "retest_tolerance_atr": 0.5,
+        "structure_pattern": "Break of Structure", "use_divergence": False,
+        "use_engulfing": False, "use_location": False, "use_piercing": False,
+        "use_pin_bar": False, "use_star": False, "use_structure": True,
+        "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.02, "max_pivot_gap": 60,
+        "min_confirmations": 1, "pivot_left": 30, "pivot_right": 3,
+        "predict_direction": "Continuation", "retest_tolerance_atr": 0.5,
+        "structure_pattern": "Break of Structure", "use_divergence": False,
+        "use_engulfing": False, "use_location": False, "use_piercing": False,
+        "use_pin_bar": False, "use_star": False, "use_structure": True,
+        "use_trend_filter": False,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "ma_length": 200, "ma_type": "EMA",
+        "max_pivot_gap": 60, "min_confirmations": 1, "pivot_left": 20,
+        "pivot_right": 3, "predict_direction": "Continuation",
+        "retest_tolerance_atr": 0.5, "structure_pattern": "Break of Structure",
+        "trend_logic": "With Trend", "use_divergence": False,
+        "use_engulfing": False, "use_location": False, "use_piercing": False,
+        "use_pin_bar": False, "use_star": False, "use_structure": True,
+        "use_trend_filter": True,
+    },
+})

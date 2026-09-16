@@ -687,3 +687,60 @@ PRESETS: dict = {
         "predict_direction": "Fade",
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     8,545  59.68% +17.9 |  5,777  60.36% | 57.60% (55.6/59.3)   926  59.61% | 56.9% (2017)
+    #   Balanced   4,745  60.63% +14.6 |  3,120  61.51% | 57.61% (53.9/60.5)   528  61.74% | 56.8% (2017)
+    #   Selective  1,326  59.80%  +7.1 |    938  59.59% | 61.85% (62.3/61.5)   139  57.55% | 54.9% (2022)
+    #
+    # The 5m finding carries: fade the marubozu (body >= 75%) printed after a
+    # 6-bar extension. Volume and Balanced are that pattern alone and both improve
+    # out of sample (57.60 -> 59.61% on 926 bets, 57.61 -> 61.74% on 528). Their
+    # first train halves were the weak ones (55.6 / 53.9%), so read the tier
+    # order as volume only.
+    # Selective turns all nine patterns on with stricter geometry and a with-trend
+    # gate: 61.85% train, 57.55% holdout on 139 bets.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "body_strong_min": 0.5,
+        "marubozu_body_min": 0.75, "min_range_atr": 0.5, "pat_doji": False,
+        "pat_engulfing": False, "pat_hammer": False, "pat_harami": False,
+        "pat_marubozu": True, "pat_piercing": False, "pat_soldiers": False,
+        "pat_star": False, "pat_tweezer": False, "predict_direction": "Fade",
+        "prior_move_atr": 1.0, "prior_move_bars": 6,
+        "prior_move_logic": "Extension", "require_prior_move": True,
+        "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "body_strong_min": 0.5,
+        "marubozu_body_min": 0.75, "min_range_atr": 0.5, "pat_doji": False,
+        "pat_engulfing": False, "pat_hammer": False, "pat_harami": False,
+        "pat_marubozu": True, "pat_piercing": False, "pat_soldiers": False,
+        "pat_star": False, "pat_tweezer": False, "predict_direction": "Fade",
+        "prior_move_atr": 1.5, "prior_move_bars": 6,
+        "prior_move_logic": "Extension", "require_prior_move": True,
+        "use_trend_filter": False,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "body_strong_min": 0.7,
+        "ma_length": 200, "ma_type": "EMA", "marubozu_body_min": 0.9,
+        "min_range_atr": 1.0, "pat_doji": True, "pat_engulfing": True,
+        "pat_hammer": True, "pat_harami": True, "pat_marubozu": True,
+        "pat_piercing": True, "pat_soldiers": True, "pat_star": True,
+        "pat_tweezer": True, "predict_direction": "Fade", "prior_move_atr": 1.0,
+        "prior_move_bars": 6, "prior_move_logic": "Extension",
+        "require_prior_move": True, "trend_logic": "With Trend",
+        "use_trend_filter": True,
+    },
+})

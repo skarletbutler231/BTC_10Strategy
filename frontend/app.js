@@ -10,6 +10,52 @@ const api = (path, opts) => fetch(path, opts).then(async (r) => {
 
 let CATALOG = {};          // id -> strategy schema
 let chart, candleSeries, volSeries;
+let TZ = 'utc';            // 'utc' | 'local' — basis for every time shown
+let LAST_TRADES = null;    // last table + chart payload, re-rendered when the
+let LAST_CANDLES = null;   // basis flips, so a flip never refetches
+let LAST_MARKERS = [];
+
+/* ---------- time basis ----------
+   Candle times stay real UTC seconds everywhere — in the series data, in the
+   API calls, and in the backend. Only the *labels* change, via the chart's
+   formatter hooks. Shifting the timestamps instead would be simpler but breaks
+   on DST boundaries (a fall-back hour produces duplicate, non-monotonic times
+   that lightweight-charts rejects). Formatting each timestamp on its own keeps
+   DST correct for free. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const p2 = (n) => String(n).padStart(2, '0');
+
+/** Calendar parts of a UTC timestamp (unix seconds) in the active basis. */
+function tparts(t) {
+  const d = new Date(t * 1000);
+  return TZ === 'local'
+    ? { y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate(),
+        h: d.getHours(), mi: d.getMinutes(), s: d.getSeconds() }
+    : { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(),
+        h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() };
+}
+
+/** Short name of the active basis, e.g. 'UTC' or 'UTC+09'. */
+function tzLabel() {
+  if (TZ !== 'local') return 'UTC';
+  const off = -new Date().getTimezoneOffset();   // minutes east of UTC
+  const a = Math.abs(off);
+  return `UTC${off < 0 ? '-' : '+'}${p2(Math.floor(a / 60))}${a % 60 ? ':' + p2(a % 60) : ''}`;
+}
+
+/* Time-axis tick labels. tickMarkType: 0=Year 1=Month 2=DayOfMonth 3=Time
+   4=TimeWithSeconds. Tick *positions* are still picked on the UTC grid, so on a
+   whole-hour offset the labels land on round hours as usual. */
+function tickMark(time, tickMarkType) {
+  if (typeof time !== 'number') return '';   // business-day form; unused here
+  const t = tparts(time);
+  if (tickMarkType === 0) return String(t.y);
+  if (tickMarkType === 1) return MONTHS[t.mo - 1];
+  if (tickMarkType === 2) return String(t.d);
+  if (tickMarkType === 4) return `${p2(t.h)}:${p2(t.mi)}:${p2(t.s)}`;
+  return `${p2(t.h)}:${p2(t.mi)}`;
+}
 
 /* ---------- chart ---------- */
 function initChart() {
@@ -18,7 +64,11 @@ function initChart() {
     layout: { background: { color: '#0e1116' }, textColor: '#9aa5b1' },
     grid: { vertLines: { color: '#1b222c' }, horzLines: { color: '#1b222c' } },
     rightPriceScale: { borderColor: '#2a323d' },
-    timeScale: { borderColor: '#2a323d', timeVisible: true, secondsVisible: false },
+    timeScale: {
+      borderColor: '#2a323d', timeVisible: true, secondsVisible: false,
+      tickMarkFormatter: (t, ty) => tickMark(t, ty),
+    },
+    localization: { timeFormatter: (t) => fmtTime(t) },
     crosshair: { mode: 0 },
   });
   candleSeries = chart.addCandlestickSeries({
@@ -34,7 +84,8 @@ function initChart() {
   ro.observe(el);
 }
 
-function drawCandles(candles) {
+function drawCandles(candles, fit = true) {
+  LAST_CANDLES = candles;
   candleSeries.setData(candles.map((c) => ({
     time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
   })));
@@ -42,7 +93,12 @@ function drawCandles(candles) {
     time: c.time, value: c.volume,
     color: c.close >= c.open ? 'rgba(38,166,154,.4)' : 'rgba(239,83,80,.4)',
   })));
-  chart.timeScale().fitContent();
+  if (fit) chart.timeScale().fitContent();
+}
+
+function drawMarkers(markers) {
+  LAST_MARKERS = markers || [];
+  candleSeries.setMarkers(LAST_MARKERS);
 }
 
 /* ---------- param form ---------- */
@@ -123,6 +179,7 @@ const BULK_PRESETS = [
   'PM 5m Volume', 'PM 5m Balanced', 'PM 5m Selective', 'PM 5m Hi Hit',
   'PM 5m Volume - 2yr Train', 'PM 5m Balanced - 2yr Train',
   'PM 5m Wknd Volume', 'PM 5m Wknd Balanced', 'PM 5m Wknd Hi Hit',
+  'PM 15m Volume', 'PM 15m Balanced', 'PM 15m Selective',
 ];
 
 /** One row per sub-strategy: [x] Name [preset]. Driven by the combined
@@ -255,9 +312,8 @@ function setTab(name) {
 
 /* ---------- rendering results ---------- */
 function fmtTime(t) {
-  const d = new Date(t * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+  const d = tparts(t);
+  return `${p2(d.mo)}-${p2(d.d)} ${p2(d.h)}:${p2(d.mi)}`;
 }
 const fmtPx = (v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -299,6 +355,7 @@ function renderStatsBinary(s) {
 }
 
 function renderTrades(trades, binary) {
+  LAST_TRADES = { trades, binary };
   $('tradeCount').textContent = `${trades.length} ${binary ? 'bet' : 'trade'}(s)`;
   const rows = trades.map((t, i) => `
     <tr>
@@ -317,12 +374,24 @@ function renderTrades(trades, binary) {
 }
 
 /* ---------- actions ---------- */
+/* The backend reads a bare 'YYYY-MM-DD' as a UTC day (main.py:_to_ms), which is
+   what UTC mode wants. In Local mode the same date means a different absolute
+   window, so send the local day's real boundaries as epoch ms — _to_ms takes a
+   digit string as an epoch, and an end sent this way must already carry its
+   23:59:59 because the inclusive-end fixup only fires for the date format. */
+function dayBounds(v, end) {
+  if (TZ !== 'local' || !v) return v;
+  const [y, m, d] = v.split('-').map(Number);
+  const dt = end ? new Date(y, m - 1, d, 23, 59, 59) : new Date(y, m - 1, d, 0, 0, 0);
+  return String(dt.getTime());
+}
+
 function q() {
   return {
     symbol: $('symbol').value.trim() || 'BTCUSDT',
     interval: $('interval').value,
-    start: $('start').value,
-    end: $('end').value,
+    start: dayBounds($('start').value, false),
+    end: dayBounds($('end').value, true),
   };
 }
 
@@ -346,7 +415,7 @@ async function loadChart() {
     const params = new URLSearchParams(p);
     const data = await api('/api/candles?' + params.toString());
     drawCandles(data.candles);
-    candleSeries.setMarkers([]);
+    drawMarkers([]);
     setOk(`Loaded ${data.count} ${data.interval} candles for ${data.symbol}.`);
   } catch (e) { setError(e.message); }
 }
@@ -369,7 +438,7 @@ async function runBacktest() {
       body: JSON.stringify(body),
     });
     drawCandles(data.candles);
-    candleSeries.setMarkers(data.markers);
+    drawMarkers(data.markers);
     const s = data.stats;
     if (data.mode === 'polymarket') {
       renderStatsBinary(s);
@@ -400,13 +469,50 @@ function applyModeUI() {
 function defaultDates() {
   const end = new Date();
   const start = new Date(end.getTime() - 7 * 864e5);
-  const iso = (d) => d.toISOString().slice(0, 10);
+  const iso = (d) => (TZ === 'local'
+    ? `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    : d.toISOString().slice(0, 10));
   $('end').value = iso(end);
   $('start').value = iso(start);
 }
 
+/* Repaint every time on the page in the current basis. The date inputs keep
+   whatever the user typed — the same calendar day in a new basis is a different
+   window, which is exactly what the note next to them now spells out. */
+function applyTz() {
+  const label = tzLabel();
+  $('tzNote').textContent = label;
+  $('thEntryTime').textContent = `Entry time (${label})`;
+  if (LAST_TRADES) renderTrades(LAST_TRADES.trades, LAST_TRADES.binary);
+  if (!LAST_CANDLES) return;
+
+  /* The crosshair reads TZ live through its formatter closure, but the time
+     AXIS does not: v4.1 memoises each tick mark's label and only drops that
+     cache when the series data changes (chart.applyOptions does not clear it,
+     so the old labels just stay on screen). Re-setting the same candles is the
+     one public call that rebuilds them — cheap, since the data is in hand.
+     New object identities, so the library can't short-circuit on reference.
+
+     This re-fits the view rather than preserving the current zoom: after a
+     setData, getVisibleLogicalRange() reports a range that does not match what
+     is actually on screen, and restoring it squashes every bar into the right
+     edge. Re-fitting is the same thing Load chart and Run backtest already do. */
+  drawCandles(LAST_CANDLES.map((c) => ({ ...c })));
+  drawMarkers(LAST_MARKERS);
+}
+
+function setTz(basis) {
+  TZ = basis === 'local' ? 'local' : 'utc';
+  try { localStorage.setItem('tzBasis', TZ); } catch (e) { /* private mode */ }
+  applyTz();
+}
+
 async function init() {
+  try { TZ = localStorage.getItem('tzBasis') === 'local' ? 'local' : 'utc'; }
+  catch (e) { /* private mode -> UTC */ }
+  $('tz').value = TZ;
   initChart();
+  applyTz();
   defaultDates();
   const { strategies } = await api('/api/strategies');
   const sel = $('strategy');
@@ -440,6 +546,7 @@ async function init() {
   sel.onchange = () => buildForm(CATALOG[sel.value]);
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
   $('mode').onchange = applyModeUI;
+  $('tz').onchange = (e) => setTz(e.target.value);
   $('runBtn').onclick = runBacktest;
   $('loadBtn').onclick = loadChart;
 

@@ -249,6 +249,55 @@ class RegimeSwitch(Strategy):
                 "trend_logic": "With Trend", "ma_type": "EMA", "ma_length": 200,
                 "source": "close",
             },
+            # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+            # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+            # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+            # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+            # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+            # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+            # train z >= 2.5; the pick is the best train hit rate less one standard error.
+            # Flat $1 per bet, next-candle direction:
+            #
+            #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+            #   Volume     8,425  60.00% +18.4 |  6,028  60.29% | 60.08% (61.3/59.0)   879  57.91% | 54.9% (2017)
+            #   Balanced   5,536  60.17% +15.1 |  3,988  59.98% | 61.49% (64.4/59.0)   569  59.23% | 56.2% (2022)
+            #   Selective  2,416  59.56%  +9.4 |  1,813  58.36% | 62.34% (63.8/60.6)   202  64.85% | 51.6% (2018)
+            #
+            # Volume and Balanced use the Volatility Ratio detector at threshold 25. That
+            # detector reads ~50 when fast and slow ATR agree, so 25 labels almost every
+            # bar 'trend' and the mapping 'Trend=Reversion, Range=Momentum' collapses to
+            # reversion nearly everywhere: the 10-bar channel fade with a with-trend
+            # EMA200 gate is what earns. Selective says it directly: ADX 15 + Always
+            # Reversion.
+            # Selective is the best holdout on the 15m board at 64.85% (202 bets, +-3.4pp)
+            # against 62.34% train; Balanced 61.49% -> 59.23%; Volume 60.08% -> 57.91%.
+            "PM 15m Volume": {
+                "breakout_buffer_atr": 0.15, "channel_length": 10, "ma_length": 200,
+                "ma_type": "EMA", "min_body_ratio": 0.2, "regime_length": 20,
+                "regime_mapping": "Trend=Reversion, Range=Momentum",
+                "regime_method": "Volatility Ratio", "regime_threshold": 25,
+                "trend_logic": "With Trend", "use_trend_filter": True,
+                "vol_atr_length": 50, "vol_max_atr_pct": 20.0,
+                "vol_min_atr_pct": 0.0,
+            },
+            # *** THE PICK *** on volume-vs-holdout grounds: 569 holdout bets at 59.23%.
+            "PM 15m Balanced": {
+                "breakout_buffer_atr": 0.3, "channel_length": 10, "ma_length": 200,
+                "ma_type": "EMA", "min_body_ratio": 0.2, "regime_length": 20,
+                "regime_mapping": "Trend=Reversion, Range=Momentum",
+                "regime_method": "Volatility Ratio", "regime_threshold": 25,
+                "trend_logic": "With Trend", "use_trend_filter": True,
+                "vol_atr_length": 50, "vol_max_atr_pct": 20.0,
+                "vol_min_atr_pct": 0.0,
+            },
+            "PM 15m Selective": {
+                "breakout_buffer_atr": 0.3, "channel_length": 20, "ma_length": 200,
+                "ma_type": "EMA", "min_body_ratio": 0.2, "regime_length": 20,
+                "regime_mapping": "Always Reversion", "regime_method": "ADX",
+                "regime_threshold": 15, "trend_logic": "With Trend",
+                "use_trend_filter": True, "vol_atr_length": 50,
+                "vol_max_atr_pct": 3.0, "vol_min_atr_pct": 0.2,
+            },
         }
 
     # ---- regime score -------------------------------------------------------

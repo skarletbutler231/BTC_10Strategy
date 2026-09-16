@@ -441,3 +441,49 @@ PRESETS.update({
     # Lowest buffer at which every full year 2018-2026 clears its own ceiling.
     "PM 1m Line Break Balanced": {**_LINE_1M_COMMON, "break_buffer_atr": 0.5},
 })
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    10,366  55.61% +11.4 |  7,979  55.96% | 55.79% (56.6/55.0)   885  52.20% | 51.0% (2017)
+    #   Balanced   3,440  56.60%  +7.7 |  2,570  56.69% | 57.83% (61.9/54.1)   308  53.57% | 47.9% (2017)
+    #   Selective  2,258  56.02%  +5.7 |  1,760  56.31% | 57.93% (57.2/58.7)   189  50.26% | 45.3% (2017)
+    #
+    # NOT RECOMMENDED on 15m. Fading the line break (Against Signal, 0.5 ATR
+    # buffer) is 55.8% train / 52.2% holdout in Volume, 57.8% / 53.6% in Balanced
+    # and 57.9% / 50.3% in Selective. The whole-record z (+11.4) is carried by
+    # the unswept years (56.0%); the last nine months are a coin flip. Kept so
+    # the failure is on record next to the 5m and 1m presets.
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.02, "break_buffer_atr": 0.5,
+        "max_line_age_bars": 200, "max_pivot_gap": 200, "max_slope_atr": 0.5,
+        "min_pivot_gap": 5, "pivot_left": 12, "pivot_right": 3,
+        "predict_direction": "Against Signal", "require_direction": False,
+        "use_bounce": False, "use_break": True, "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 0.5,
+        "ma_length": 200, "ma_type": "EMA", "max_line_age_bars": 200,
+        "max_pivot_gap": 200, "max_slope_atr": 0.5, "min_pivot_gap": 5,
+        "pivot_left": 12, "pivot_right": 1, "predict_direction": "Against Signal",
+        "require_direction": False, "trend_logic": "With Trend",
+        "use_bounce": False, "use_break": True, "use_trend_filter": True,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.02, "break_buffer_atr": 0.5,
+        "ma_length": 200, "ma_type": "EMA", "max_line_age_bars": 200,
+        "max_pivot_gap": 200, "max_slope_atr": 0.5, "min_pivot_gap": 5,
+        "pivot_left": 30, "pivot_right": 3, "predict_direction": "Against Signal",
+        "require_direction": True, "trend_logic": "Against Trend",
+        "use_bounce": False, "use_break": True, "use_trend_filter": True,
+    },
+})

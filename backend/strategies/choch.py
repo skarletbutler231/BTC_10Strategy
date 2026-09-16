@@ -535,3 +535,52 @@ PRESETS: dict = {
         "vol_atr_length": 50, "atr_pct_min": 0.10, "atr_pct_max": 2.0,
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     7,970  57.47% +13.3 |  5,955  57.31% | 57.98% (56.9/59.1)   780  57.82% | 53.2% (2021)
+    #   Balanced   3,799  58.28% +10.2 |  2,888  57.69% | 61.75% (61.3/62.3)   375  57.87% | 52.8% (2017)
+    #   Selective  1,846  56.77%  +5.8 |  1,428  54.83% | 68.60% (66.7/70.8)   176  56.25% | 48.8% (2021)
+    #
+    # Every break is traded backwards (Against Structure) in every tier, as on
+    # 5m. Volume: 4-bar pivots, a full-ATR close-beyond buffer, 0.5 ATR
+    # displacement, no HTF filter: 57.98% train -> 57.82% holdout, flat.
+    # Balanced adds the opposing 60-bar structure and holds 57.87%.
+    # Selective (CHoCH only + opposing HTF) is the 5m story again: 68.60% train,
+    # 56.25% holdout, 54.83% on the unswept years. Shipped for the frontier, not
+    # as a pick.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 1.0,
+        "break_mode": "Close Beyond", "entry_mode": "On Break",
+        "min_displacement_atr": 0.5, "pivot_left": 4, "pivot_right": 3,
+        "predict_direction": "Against Structure", "signal_on": "Both",
+        "use_htf_filter": False, "vol_atr_length": 50,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 0.75,
+        "break_mode": "Wick Beyond", "entry_mode": "On Break",
+        "htf_logic": "Oppose", "htf_pivot_left": 60, "htf_pivot_right": 3,
+        "min_displacement_atr": 1.0, "pivot_left": 4, "pivot_right": 1,
+        "predict_direction": "Against Structure", "signal_on": "Both",
+        "use_htf_filter": True, "vol_atr_length": 50,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 0.75,
+        "break_mode": "Wick Beyond", "entry_mode": "On Break",
+        "htf_logic": "Oppose", "htf_pivot_left": 60, "htf_pivot_right": 3,
+        "min_displacement_atr": 1.0, "pivot_left": 8, "pivot_right": 1,
+        "predict_direction": "Against Structure", "signal_on": "CHoCH only",
+        "use_htf_filter": True, "vol_atr_length": 50,
+    },
+})

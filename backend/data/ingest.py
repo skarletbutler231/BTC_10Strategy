@@ -261,6 +261,61 @@ def run(symbol: str, interval: str, start_ym: str, end_ym: str, *,
     return {"new_rows": grand_rows, "total_rows": cnt, "seconds": dt}
 
 
+def tail(symbol: str = "BTCUSDT", interval: str = "1m", *, db_path=None,
+         max_hours: float = 48.0) -> dict:
+    """Fill the still-forming current day from the live REST API.
+
+    The archive loader above stops at ``today`` on purpose — data.binance.vision only
+    publishes a day once it has closed — and ``backend/store.py`` splices the missing tail
+    on at READ time. Anything reading the ``candles`` table with raw SQL bypasses that splice
+    and silently sees a table that ends at yesterday 23:59, which is how a 12-hour hole went
+    unnoticed. This closes the hole in the table itself.
+
+    Only CLOSED minutes are written: the final kline Binance returns is the still-forming
+    bar, whose OHLC is not yet settled. Nothing is recorded in ``ingest_log`` — the day's
+    archive must still load later; the rows are identical, so INSERT OR IGNORE makes the
+    overlap a no-op.
+    """
+    symbol, interval = symbol.upper(), interval.lower()
+    step = INTERVAL_SECONDS_TAIL[interval]
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    last_closed = (now_ts // step) * step - step  # newest bar whose period has ENDED
+
+    _, hi, _ = coverage(symbol, interval, db_path=db_path)
+    floor_ts = now_ts - int(max_hours * 3600)
+    start = max(hi + step, floor_ts) if hi else floor_ts
+    if start > last_closed:
+        print(f"tail {symbol} {interval}: up to date "
+              f"(newest {datetime.fromtimestamp(hi, timezone.utc):%Y-%m-%d %H:%M}Z)", flush=True)
+        return {"new_rows": 0, "fetched": 0}
+
+    from .. import binance  # local import: the archive path must not require API reachability
+    kl = binance.fetch_klines(symbol, interval, start * 1000, (last_closed + step) * 1000 - 1)
+    rows = [(int(k["time"]), float(k["open"]), float(k["high"]), float(k["low"]),
+             float(k["close"]), float(k["volume"]))
+            for k in kl if start <= int(k["time"]) <= last_closed]
+
+    conn = db.connect(db_path)
+    try:
+        written = 0
+        for i in range(0, len(rows), INSERT_BATCH):
+            written += _insert(conn, symbol, interval, rows[i:i + INSERT_BATCH])
+        conn.commit()
+    finally:
+        conn.close()
+
+    _, hi2, _ = coverage(symbol, interval, db_path=db_path)
+    print(f"tail {symbol} {interval}: fetched {len(rows):,}, wrote {written:,} new "
+          f"-> newest {datetime.fromtimestamp(hi2, timezone.utc):%Y-%m-%d %H:%M}Z", flush=True)
+    return {"new_rows": written, "fetched": len(rows)}
+
+
+# Seconds per interval for the tail filler. Kept local (not imported from backend.store) so
+# this module stays usable with no network/config beyond the DB.
+INTERVAL_SECONDS_TAIL = {"1s": 1, "1m": 60, "3m": 180, "5m": 300, "15m": 900,
+                         "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400}
+
+
 def coverage(symbol: str, interval: str, *, db_path=None):
     """Return (min_time, max_time, count) for a symbol/interval in the DB."""
     conn = db.connect(db_path, readonly=True)
@@ -284,8 +339,15 @@ def _cli(argv=None):
     ap.add_argument("--to", dest="end", default="now", help="YYYY-MM or 'now'")
     ap.add_argument("--db", default=None, help="override DB path (else MARKET_DB / data/market.db)")
     ap.add_argument("--force", action="store_true", help="re-load partitions already logged")
+    ap.add_argument("--tail", action="store_true",
+                    help="skip the archive; REST-fill only the still-forming current day")
+    ap.add_argument("--tail-max-hours", type=float, default=48.0,
+                    help="with --tail, how far back to reach if the table is far behind")
     args = ap.parse_args(argv)
     try:
+        if args.tail:
+            tail(args.symbol, args.interval, db_path=args.db, max_hours=args.tail_max_hours)
+            return 0
         run(args.symbol, args.interval, args.start, args.end,
             db_path=args.db, force=args.force)
     except IngestError as e:

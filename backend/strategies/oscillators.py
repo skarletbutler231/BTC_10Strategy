@@ -558,3 +558,47 @@ PRESETS: dict = {
         "overbought": 90, "oversold": 10,
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume     8,993  59.41% +17.9 |  6,906  59.60% | 59.87% (60.1/59.6)   811  57.09% | 52.5% (2017)
+    #   Balanced   3,456  60.42% +12.2 |  2,594  60.95% | 60.90% (62.0/59.9)   330  55.45% | 53.4% (2017)
+    #   Selective  1,887  63.43% +11.7 |  1,423  64.16% | 63.08% (65.6/60.2)   185  58.38% | 56.0% (2017)
+    #
+    # Zone Entry, faded, in every tier - the 5m finding that only the band entry
+    # earns. Volume is a 5-bar TSI at 90/10 with no filters: 59.87% train ->
+    # 57.09% holdout on 811 bets, 59.60% on the unswept years. Selective is the
+    # same TSI inside 0.1-3.0 ATR% with a with-trend gate (58.38% holdout on
+    # 185); Balanced is a 5-bar RSI at 80/20 and shrinks most (60.90% -> 55.45%).
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "osc_length": 5, "osc_type": "TSI",
+        "overbought": 90, "oversold": 10, "predict_direction": "Fade Oscillator",
+        "signal_length": 3, "smooth_k": 1, "trigger_mode": "Zone Entry",
+        "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 20.0, "atr_pct_min": 0.0, "ma_length": 200, "ma_type": "EMA",
+        "osc_length": 5, "osc_type": "RSI", "overbought": 80, "oversold": 20,
+        "predict_direction": "Fade Oscillator", "signal_length": 3, "smooth_k": 1,
+        "trend_logic": "With Trend", "trigger_mode": "Zone Entry",
+        "use_trend_filter": True,
+    },
+    "PM 15m Selective": {
+        "atr_pct_max": 3.0, "atr_pct_min": 0.1, "ma_length": 200, "ma_type": "EMA",
+        "osc_length": 5, "osc_type": "TSI", "overbought": 90, "oversold": 10,
+        "predict_direction": "Fade Oscillator", "signal_length": 3, "smooth_k": 1,
+        "trend_logic": "With Trend", "trigger_mode": "Zone Entry",
+        "use_trend_filter": True,
+    },
+})

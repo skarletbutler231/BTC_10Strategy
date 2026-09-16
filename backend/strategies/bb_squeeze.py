@@ -242,6 +242,53 @@ class BBSqueeze(Strategy):
                 "trend_logic": "With Trend", "ma_type": "EMA",
                 "ma_length": 200, "source": "close",
             },
+            # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+            # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+            # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+            # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+            # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+            # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+            # train z >= 2.5; the pick is the best train hit rate less one standard error.
+            # Flat $1 per bet, next-candle direction:
+            #
+            #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+            #   Volume     9,820  59.60% +19.0 |  7,593  59.82% | 59.87% (59.2/60.5)   849  57.24% | 52.2% (2017)
+            #   Balanced   4,287  59.69% +12.7 |  3,263  59.18% | 63.04% (62.2/63.8)   399  58.65% | 49.0% (2017)
+            #   Selective  2,042  60.97%  +9.9 |  1,607  59.68% | 65.54% (64.9/66.2)   168  66.07% | 50.0% (2017)
+            #
+            # Reversion at the band with the EMA bias-slope filter on and NO squeeze
+            # requirement in Volume and Balanced - the 5m result (the squeeze earns
+            # nothing, the band touch does) carries to 15m. min_body_ratio 0.4 in both.
+            # Selective is the exception: it DOES require a 40th-percentile bandwidth
+            # squeeze, and it is the best holdout here, 66.07% on 168 bets (+-3.7pp)
+            # against 65.54% train. Thin, but it did not shrink.
+            # *** THE PICK. *** 1,378 train bets at 59.87%, 849 holdout bets at 57.24%.
+            "PM 15m Volume": {
+                "bb_length": 14, "bb_mult": 2.0, "ema_bias_length": 200,
+                "ema_bias_slope_bars": 5, "min_body_ratio": 0.4, "pctb_lower": 0.0,
+                "pctb_upper": 1.0, "predict_direction": "Reversion",
+                "require_squeeze": False, "use_ema_bias": True,
+                "use_trend_filter": False, "vol_atr_length": 14,
+                "vol_max_atr_pct": 3.0, "vol_min_atr_pct": 0.1,
+            },
+            "PM 15m Balanced": {
+                "bb_length": 20, "bb_mult": 2.0, "ema_bias_length": 50,
+                "ema_bias_slope_bars": 5, "min_body_ratio": 0.4, "pctb_lower": 0.0,
+                "pctb_upper": 1.0, "predict_direction": "Reversion",
+                "require_squeeze": False, "use_ema_bias": True,
+                "use_trend_filter": False, "vol_atr_length": 14,
+                "vol_max_atr_pct": 20.0, "vol_min_atr_pct": 0.0,
+            },
+            "PM 15m Selective": {
+                "bb_length": 20, "bb_mult": 2.0, "bw_lookback": 100,
+                "bw_squeeze_pct": 40, "ema_bias_length": 50,
+                "ema_bias_slope_bars": 5, "min_body_ratio": 0.2,
+                "pctb_lower": -0.05, "pctb_upper": 1.05,
+                "predict_direction": "Reversion", "require_squeeze": True,
+                "use_ema_bias": True, "use_trend_filter": False,
+                "vol_atr_length": 14, "vol_max_atr_pct": 3.0,
+                "vol_min_atr_pct": 0.1,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

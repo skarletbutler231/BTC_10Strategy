@@ -309,6 +309,60 @@ class RsiBb(Strategy):
                 "use_bias_filter": False, "use_trend_filter": False,
                 "vol_atr_length": 14, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
             },
+            # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+            # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+            # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+            # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+            # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+            # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+            # train z >= 2.5; the pick is the best train hit rate less one standard error.
+            # Flat $1 per bet, next-candle direction:
+            #
+            #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+            #   Volume     9,420  60.14% +19.7 |  7,304  60.08% | 60.73% (60.8/60.7)   779  59.69% | 52.9% (2017)
+            #   Balanced   5,609  60.53% +15.8 |  4,359  60.20% | 62.88% (63.3/62.5)   466  59.66% | 51.5% (2017)
+            #   Selective  3,452  61.30% +13.3 |  2,683  61.05% | 64.01% (66.5/61.5)   305  59.34% | 55.3% (2017)
+            #
+            # All three tiers are one engine: a tight 10-bar / 1.5-sigma band, %B beyond
+            # it (-0.1 / 1.1), the with-trend EMA200 gate and an ATR% window of 0.1-3.0.
+            # They differ only in the RSI zone (35/65, 30/70, 20/80). Direction is Both:
+            # the 5m finding that Long Only wins does not carry to 15m.
+            # The band sits on the low edge of the grid (10 bars, 1.5 sigma), so a
+            # tighter band was not tested - treat it as the frontier, not the optimum.
+            # Holdout is flat across tiers (59.7 / 59.7 / 59.3%), which is the shrinkage
+            # to expect: Selective's 64.0% train headline is the most in-sample number.
+            # *** THE PICK. *** 9,420 bets, 60.14% (z +19.7); 60.73% train, 59.69%
+            # holdout, 60.08% over the never-swept 2017-2024.
+            # Priced on REAL 15m quotes (2026-07-03 -> 09-13, taker fee): 56.59% at a
+            # 0.537 fill. Trade it flat (depth 1) with push3 >= 0.3: 62.16% on 111
+            # chains. See README "The 15-minute market: RSI + BB PM 15m Volume".
+            "PM 15m Volume": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "bb_length": 10,
+                "bb_mult": 1.5, "direction": "Both", "ma_length": 200,
+                "ma_source": "close", "ma_type": "EMA", "min_close_recovery": 0.0,
+                "min_wick_ratio": 0.0, "pctb_lower": -0.1, "pctb_upper": 1.1,
+                "rsi_length": 7, "rsi_overbought": 65, "rsi_oversold": 35,
+                "trend_logic": "With Trend", "use_bias_filter": False,
+                "use_trend_filter": True,
+            },
+            "PM 15m Balanced": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "bb_length": 10,
+                "bb_mult": 1.5, "direction": "Both", "ma_length": 200,
+                "ma_source": "close", "ma_type": "EMA", "min_close_recovery": 0.0,
+                "min_wick_ratio": 0.0, "pctb_lower": -0.1, "pctb_upper": 1.1,
+                "rsi_length": 7, "rsi_overbought": 70, "rsi_oversold": 30,
+                "trend_logic": "With Trend", "use_bias_filter": False,
+                "use_trend_filter": True,
+            },
+            "PM 15m Selective": {
+                "atr_pct_max": 3.0, "atr_pct_min": 0.1, "bb_length": 10,
+                "bb_mult": 1.5, "direction": "Both", "ma_length": 200,
+                "ma_source": "close", "ma_type": "EMA", "min_close_recovery": 0.0,
+                "min_wick_ratio": 0.0, "pctb_lower": -0.1, "pctb_upper": 1.1,
+                "rsi_length": 5, "rsi_overbought": 80, "rsi_oversold": 20,
+                "trend_logic": "With Trend", "use_bias_filter": False,
+                "use_trend_filter": True,
+            },
         }
 
     def generate_signals(self, candles: List[dict], params: dict) -> List[Signal]:

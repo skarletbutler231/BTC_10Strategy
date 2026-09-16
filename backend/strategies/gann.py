@@ -511,3 +511,45 @@ PRESETS: dict = {
         "break_buffer_atr": 0.1,
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    12,819  56.83% +15.5 |  9,617  56.67% | 56.93% (55.7/58.1) 1,168  57.96% | 52.5% (2017)
+    #   Balanced   6,381  56.21%  +9.9 |  4,731  56.08% | 56.92% (55.9/58.0)   603  56.05% | 52.0% (2017)
+    #   Selective -- nothing admitted
+    #
+    # The 5m verdict again: the angles do not earn. Both admitted tiers set
+    # unit_atr_mult 0.002 with only the 1x1 on - a flat level from the anchor
+    # pivot - and fade its break. Volume (10/2 pivots, 0.3 ATR buffer, 100-bar
+    # anchor age) 56.93% train -> 57.96% holdout on 1,168 bets; Balanced (20-bar
+    # pivots, 0.8 buffer) 56.05%. No Selective config passed admission.
+    # *** THE PICK. ***
+    "PM 15m Volume": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 0.3,
+        "max_anchor_age_bars": 100, "pivot_left": 10, "pivot_right": 2,
+        "predict_direction": "Against Signal", "unit_atr_mult": 0.002,
+        "use_1x1": True, "use_1x2": False, "use_1x3": False, "use_1x4": False,
+        "use_1x8": False, "use_2x1": False, "use_3x1": False, "use_4x1": False,
+        "use_8x1": False, "use_bounce": False, "use_break": True,
+        "use_trend_filter": False,
+    },
+    "PM 15m Balanced": {
+        "atr_pct_max": 1.5, "atr_pct_min": 0.05, "break_buffer_atr": 0.8,
+        "max_anchor_age_bars": 100, "pivot_left": 20, "pivot_right": 2,
+        "predict_direction": "Against Signal", "unit_atr_mult": 0.002,
+        "use_1x1": True, "use_1x2": False, "use_1x3": False, "use_1x4": False,
+        "use_1x8": False, "use_2x1": False, "use_3x1": False, "use_4x1": False,
+        "use_8x1": False, "use_bounce": False, "use_break": True,
+        "use_trend_filter": False,
+    },
+})

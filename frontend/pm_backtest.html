@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Polymarket Backtester — real up/down record</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/lightweight-charts.js"></script>
+  <style>
+    .pgroup .prow input[type="text"] { width: 100px; text-align: left; }
+    /* The content column scrolls rather than squeezing: the equity chart and the
+       tables each get a real height instead of splitting one viewport between them. */
+    .content { overflow-y: auto; }
+    .equity-wrap { height: 520px; flex: 0 0 520px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+    #equity { width: 100%; height: 100%; }
+    .stat .sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .panes { display: flex; gap: 12px; flex: 1 0 auto; min-height: 560px; }
+    .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .side { flex: 0 0 380px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+    /* Per-rung stacks one block per book, so cap it and let it scroll; the
+       chains history gets the rest and never drops below a usable height. */
+    .side .pane.rungs { flex: 0 1 auto; max-height: 240px; }
+    .side .pane.chains { flex: 1 1 auto; min-height: 320px; }
+    .note { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+    td.pos { color: var(--green); } td.neg { color: var(--red); }
+    tr.redrow td:first-child { border-left: 2px solid var(--red); }
+    .runbar { display: flex; gap: 8px; align-items: center; }
+    .sbook { border-top: 1px solid var(--border); padding: 7px 10px 9px; }
+    .sbook:first-child { border-top: 0; }
+    .sbook .head { display: flex; align-items: center; gap: 8px; }
+    .sbook .head input[type=checkbox] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+    .sbook .head label { flex: 1; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .sbook .head .caret { background: none; border: 0; color: var(--muted); padding: 0 4px; font-size: 11px; }
+    .sbook select.play { width: 100%; margin-top: 5px; padding: 4px 6px; font-size: 11px; }
+    .sbook .note { font-size: 10px; color: var(--muted); margin: 4px 0 0; line-height: 1.35; }
+    .sbook .body { margin-top: 6px; }
+    .sbook .body .prow { padding: 3px 0; }
+    .sbook .body .prow label { font-size: 11px; }
+    .sbook .body .prow input[type=text] { width: 96px; }
+    .sbook .body .prow input[type=number] { width: 70px; }
+    .sbook.off .head label, .sbook.off .note { color: var(--muted); }
+    .sbook.off select, .sbook.off .body { opacity: .45; }
+    .sbook .body .prow input[data-depth]:disabled { opacity: .45; text-decoration: line-through; }
+    .selall { display: flex; align-items: center; gap: 6px; margin: 0 0 8px;
+              color: var(--muted); font-size: 12px; cursor: pointer; }
+    .selall input { cursor: pointer; }
+    .runrow td.s { text-align: left; color: var(--muted); }
+    /* Two-way switch: both modes stay visible, the active one is filled. */
+    .modeswitch { display: flex; margin: 8px 10px 6px; border: 1px solid var(--border);
+                  border-radius: 6px; overflow: hidden; }
+    .modeswitch button { flex: 1; border: 0; border-radius: 0; background: var(--panel2);
+                         color: var(--muted); font-size: 12px; padding: 6px 4px; }
+    .modeswitch button + button { border-left: 1px solid var(--border); }
+    .modeswitch button.on { background: var(--accent); color: #fff; font-weight: 600; }
+    .modeswitch button:not(.on):hover { color: var(--text); }
+    .modenote { margin: 0; padding: 0 10px 8px; font-size: 11px; color: var(--muted); line-height: 1.4; }
+    .runbar button { flex: 1; }
+    #market { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">◈ <strong>Polymarket Backtester</strong>
+      <span class="muted" id="brandSub">real BTC up/down record</span></div>
+    <div class="top-controls">
+      <label title="Which Polymarket market to trade: the 5-minute or the 15-minute BTC up/down. Each has its own price record, its own fitted playbooks and its own fee.">Market
+        <select id="market"></select>
+      </label>
+      <label>Start <input id="start" type="date" /></label>
+      <label>End <input id="end" type="date" /></label>
+      <label>Breakdown
+        <select id="by"><option value="week" selected>Week</option><option value="month">Month</option></select>
+      </label>
+      <button id="run" class="primary">Run backtest</button>
+      <a href="/" class="ghost" style="text-decoration:none;padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)">← Candle strategies</a>
+      <a href="/pm-edge" class="ghost" style="text-decoration:none;padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)">PM Edge →</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="pgroup">
+        <h4>Overlapping signals</h4>
+        <div class="modeswitch" role="radiogroup" aria-label="What happens when several books signal the same window">
+          <button type="button" data-mode="independent" role="radio"
+                  title="Mode 1: every book trades its own signal, so a window several strategies fire on gets one chain per strategy. Separate accounts — capital adds.">Every book trades</button>
+          <button type="button" data-mode="one_per_window" role="radio"
+                  title="Mode 2: one account, at most one position per window. When several strategies fire on the same window the first in the list below takes it and the rest yield; a window another book's rung is already in is not traded either.">One trade per window</button>
+        </div>
+        <p class="modenote" id="modeNote"></p>
+      </div>
+
+      <div class="pgroup">
+        <h4>Select Strategies <span id="stratCount" class="muted small"></span></h4>
+        <label class="selall" title="Tick every strategy, or clear them all. Shows a dash when only some are on.">
+          <input type="checkbox" id="selAll" /> Select all strategies
+        </label>
+        <div id="stratList"></div>
+      </div>
+
+      <div class="pgroup">
+        <h4>Execution (applies to every book)</h4>
+        <div class="prow">
+          <label for="max_depth" title="Rungs per chain for EVERY book, overriding each book's own setting. Blank: each book keeps its playbook's depth (the fitted answer, 1 on most of them). 1 = no martingale anywhere. Use it to compare the page at one depth, not to trade.">Max rung depth</label>
+          <input id="max_depth" type="number" min="1" max="8" step="1" placeholder="per book" />
+        </div>
+        <div class="prow">
+          <label for="entry_el" title="Seconds into the window at which the book is lifted. The same fixed offset every time — no hindsight.">Entry offset (s)</label>
+          <input id="entry_el" type="number" min="0" max="299" step="1" value="5" />
+        </div>
+        <div class="prow">
+          <label for="fee_model" title="Winnings: a flat take on a winning share's profit, breakeven(p) = p + fee*(1-p). Taker: Polymarket's crypto-market fee, charged on every BUY as shares * fee * p * (1-p) — about 1.7c a share at 55c, and a losing rung loses it too. Makers pay nothing. The 15m markets are priced with the taker fee at its documented 0.07.">Fee model</label>
+          <select id="fee_model"><option value="winnings">Winnings take</option><option value="taker">Taker (on buy)</option></select>
+        </div>
+        <div class="prow">
+          <label for="fee" title="Fee rate for the model above: 0.02 = 2% of winnings, or 0.07 = Polymarket's documented crypto taker rate. An account-level cost, so it applies to every book.">Fee rate</label>
+          <input id="fee" type="number" min="0" max="0.5" step="0.01" value="0" />
+        </div>
+        <div class="prow">
+          <label for="max_price" title="Never buy above this price; abandon the chain instead.">Max entry price</label>
+          <input id="max_price" type="number" min="0.5" max="0.99" step="0.01" value="0.95" />
+        </div>
+        <div class="prow">
+          <label for="price" title="Executable: buy YES at the ask for UP, NO at 1-bid for DOWN. Mid: the midpoint, optimistic.">Price</label>
+          <select id="price"><option value="exec">Executable</option><option value="mid">Mid</option></select>
+        </div>
+        <div class="prow">
+          <label for="use_book" title="Size each rung against the real resting ladder instead of assuming the top of book is infinitely deep. 5m: pm_l2_book, 2026-02-13..2026-07-27. 15m: pm_l2_book_15m holds one PMData day (2026-01-26), before the quote record starts, so on 15m this falls back to top of book almost everywhere. Slower, and the honest way to test a size that grows.">Walk the ladder</label>
+          <input id="use_book" type="checkbox" />
+        </div>
+      </div>
+      <p class="muted small" id="coverage"></p>
+    </aside>
+
+    <section class="content">
+      <p class="note">
+        Both halves of every bet come from the market: the entry price is the
+        <b>executable book</b> at a fixed offset into the window, and the outcome
+        is the market's own <b>Chainlink-settled</b> resolution — not the Binance
+        candle's direction, which only lands on the same side of the strike
+        <span id="proxyPct">~85%</span> of the time.
+      </p>
+      <div id="status" class="status muted">Loading…</div>
+      <div id="stats" class="stats"></div>
+      <div class="equity-wrap"><div id="equity"></div></div>
+
+      <div class="panes">
+        <div class="pane">
+          <div class="table-head"><span id="periodTitle">By week</span>
+            <span id="periodSummary" class="muted small"></span></div>
+          <div class="table-scroll">
+            <table id="periods">
+              <thead><tr>
+                <th>Period</th><th>Chains</th><th>Bust</th><th>Bets</th><th>Hit</th>
+                <th>Staked</th><th>PnL</th><th>Cum</th><th>Drawdown</th><th>Worst chain</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="side">
+          <div class="pane rungs">
+            <div class="table-head"><span>Per rung</span>
+              <span class="muted small">conditional on earlier rungs losing</span></div>
+            <div class="table-scroll">
+              <table id="rungs">
+                <thead><tr><th>Rung</th><th>Bets</th><th>Hit</th><th>Fill</th><th title="Hit rate minus the breakeven hit rate at the mean fill, fee included.">Edge</th><th>Avg cost</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="pane chains">
+            <div class="table-head"><span>Chains</span>
+              <span id="chainCount" class="muted small"></span></div>
+            <div class="table-scroll">
+              <table id="chains">
+                <thead><tr><th>Opened (UTC)</th><th>Side</th><th>Rungs</th><th>Fills</th><th>Staked</th><th>P/L</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let chart, line, SCHEMA = null;
+    // Per-market facts the page changes with the selector. `fee` is the
+    // default the market is priced with, not a hard setting.
+    const MARKETS = {
+      '5m': { label: 'real 5m BTC up/down record', window: 300, proxy: '~85%',
+              fee_model: 'winnings', fee: 0,
+              coverage: 'Order-book depth ("walk the ladder") and the "book leaning ' +
+                        'your way" filter both need the resting book, which is only ' +
+                        'available up to 2026-07-27; later chains are filtered out, ' +
+                        'not silently kept.' },
+      '15m': { label: 'real 15m BTC up/down record', window: 900, proxy: '~96%',
+               fee_model: 'taker', fee: 0.07,
+               coverage: 'Real 15m quotes are pmqb\'s capture (2s book snapshots) with ' +
+                         'Polymarket\'s own outcomes. Resting size exists for every ' +
+                         'window, so "book leaning your way" works throughout; the full ' +
+                         'ladder does not (pm_l2_book_15m holds one day before the ' +
+                         'record), so "walk the ladder" is top-of-book here. Fees on ' +
+                         'this market are a taker fee on every buy: 7% × p × (1 − p).' },
+    };
+    const market = () => $('market').value;
+    // What happens when several books signal the same window. Mode 1 is a
+    // portfolio of separate accounts; mode 2 is one account, one position.
+    const MODES = {
+      independent: {
+        short: 'every book trades',
+        note: 'Each strategy runs as its <b>own book</b> — its own ladder depth and ' +
+              'its own entry filters — and the books are aggregated. When several ' +
+              'books signal the <b>same window, every one of them trades it</b>, so ' +
+              'correlated signals stack. Peak capital adds across books.' },
+      one_per_window: {
+        short: 'one trade per window',
+        note: 'Each strategy still runs as its own book, but the books share ' +
+              '<b>one account holding at most one position per window</b>. When ' +
+              'several signal the same window the <b>first in the list below</b> ' +
+              'takes it (list order is priority) and the rest yield — as does any ' +
+              'signal on a window another book\'s rung is already in. Peak capital ' +
+              'is the deepest single chain.' },
+    };
+    let MODE = 'independent';
+    function setMode(m, rerun = true) {
+      MODE = MODES[m] ? m : 'independent';
+      for (const b of document.querySelectorAll('.modeswitch [data-mode]')) {
+        const on = b.dataset.mode === MODE;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on);
+      }
+      $('modeNote').innerHTML = MODES[MODE].note;
+      // A result on screen was computed under the other mode, so refresh it —
+      // the same rule the Breakdown control follows.
+      if (rerun && HAS_RUN) run();
+    }
+    // Set on the first click and never cleared: it keeps `syncStrategies` from
+    // overwriting a result or an error with the idle prompt, and stops the
+    // Breakdown control from starting a run that was never asked for.
+    let HAS_RUN = false;
+
+    const fmtDay = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
+    const sign = (x) => (x > 0 ? 'pos' : x < 0 ? 'neg' : '');
+    const plus = (x, d = 2) => (x >= 0 ? '+' : '') + Number(x).toFixed(d);
+
+    function initChart() {
+      const el = $('equity');
+      chart = LightweightCharts.createChart(el, {
+        layout: { background: { color: '#161b22' }, textColor: '#9aa5b1' },
+        grid: { vertLines: { color: '#1b222c' }, horzLines: { color: '#1b222c' } },
+        rightPriceScale: { borderColor: '#2a323d' },
+        timeScale: { borderColor: '#2a323d', timeVisible: false },
+      });
+      line = chart.addLineSeries({ color: '#4c8dff', lineWidth: 2, priceLineVisible: false });
+      new ResizeObserver(() => chart.resize(el.clientWidth, el.clientHeight)).observe(el);
+    }
+
+    /** One card per strategy: enable it, pick a fitted playbook, and (folded
+        away) override that playbook's depth, target and filters. Driven entirely
+        by the schema, so adding a strategy needs no change here. Only the
+        playbooks measured on the selected market are offered, and a strategy
+        with none on that market is not listed at all. */
+    function renderStrategies(all, filters) {
+      const m = market();
+      const list = all
+        .map((s) => ({ ...s, playbooks: s.playbooks.filter((p) => p.market === m),
+                       default_playbook: (s.default_playbook || {})[m] }))
+        .filter((s) => s.playbooks.length);
+      $('stratList').innerHTML = list.map((s) => {
+        const play = s.playbooks.map((p) =>
+          `<option value="${p.name}" ${p.name === s.default_playbook ? 'selected' : ''}>${p.name}</option>`).join('');
+        const fctl = filters.map((f) => {
+          const ctl = f.kind === 'bool'
+            ? `<input type="checkbox" data-f="${s.id}|${f.key}" />`
+            : `<input type="text" data-f="${s.id}|${f.key}" placeholder="${f.placeholder || ''}" />`;
+          return `<div class="prow"><label title="${(f.help || '').replace(/"/g, '&quot;')}">${f.label}</label>${ctl}</div>`;
+        }).join('');
+        return `<div class="sbook" data-book="${s.id}">
+          <div class="head">
+            <input type="checkbox" id="s_${s.id}" data-sid="${s.id}" checked />
+            <label for="s_${s.id}" title="${s.description || ''}">${s.name}</label>
+            <button class="caret" data-toggle="${s.id}" aria-label="settings">▸</button>
+          </div>
+          <select class="play" data-play="${s.id}">${play}</select>
+          <p class="note" data-note="${s.id}"></p>
+          <div class="body" data-body="${s.id}" hidden>
+            <div class="prow"><label title="Signal preset this book trades.">Preset</label>
+              <select data-preset="${s.id}">${s.presets.map((p) => `<option value="${p}">${p}</option>`).join('')}</select></div>
+            <div class="prow"><label title="Rungs per chain. 1 = no martingale.">Max rung depth</label>
+              <input type="number" min="1" max="8" step="1" data-depth="${s.id}" /></div>
+            <div class="prow"><label title="Dollars this book's completed chain banks.">Chain target ($)</label>
+              <input type="number" min="0.01" step="1" data-target="${s.id}" /></div>
+            ${fctl}
+          </div>
+        </div>`;
+      }).join('') || '<div class="prow"><label class="muted">none available</label></div>';
+
+      for (const b of document.querySelectorAll('#stratList [data-sid]')) b.onchange = syncStrategies;
+      $('selAll').onchange = () => {
+        for (const b of document.querySelectorAll('#stratList [data-sid]'))
+          b.checked = $('selAll').checked;
+        syncStrategies();
+      };
+      for (const b of document.querySelectorAll('#stratList [data-toggle]')) {
+        b.onclick = () => {
+          const body = document.querySelector(`[data-body="${b.dataset.toggle}"]`);
+          body.hidden = !body.hidden;
+          b.textContent = body.hidden ? '▸' : '▾';
+        };
+      }
+      for (const sel of document.querySelectorAll('#stratList [data-play]')) {
+        sel.onchange = () => applyPlaybook(list, sel.dataset.play);
+        applyPlaybook(list, sel.dataset.play);
+      }
+      syncStrategies();
+    }
+
+    /** Copy a playbook's measured settings into that strategy's controls. */
+    function applyPlaybook(list, sid) {
+      const s = list.find((x) => x.id === sid);
+      const name = document.querySelector(`[data-play="${sid}"]`).value;
+      const p = s.playbooks.find((x) => x.name === name);
+      if (!p) return;
+      document.querySelector(`[data-preset="${sid}"]`).value = p.preset;
+      document.querySelector(`[data-depth="${sid}"]`).value = p.max_depth;
+      document.querySelector(`[data-target="${sid}"]`).value = p.target != null ? p.target : 1;
+      for (const el of document.querySelectorAll(`[data-f^="${sid}|"]`)) {
+        const key = el.dataset.f.split('|')[1];
+        const v = (p.filters || {})[key];
+        if (el.type === 'checkbox') el.checked = !!v; else el.value = v == null ? '' : v;
+      }
+      document.querySelector(`[data-note="${sid}"]`).textContent = p.note || '';
+    }
+
+    /** Global depth set -> the per-book depth inputs are overridden, and look it. */
+    function syncDepth() {
+      const gd = +$('max_depth').value || 0;
+      for (const el of document.querySelectorAll('[data-depth]')) {
+        el.disabled = gd > 0;
+        el.title = gd > 0 ? `Overridden: the execution panel sets every book to depth ${gd}.` : '';
+      }
+    }
+
+    function syncStrategies() {
+      const boxes = [...document.querySelectorAll('#stratList [data-sid]')];
+      boxes.forEach((b) => b.closest('.sbook').classList.toggle('off', !b.checked));
+      const n = boxes.filter((b) => b.checked).length;
+      $('stratCount').textContent = `${n}/${boxes.length}`;
+      $('run').disabled = n === 0;
+      // Reflect the books rather than drive them: all on, none on, or a dash.
+      $('selAll').checked = n === boxes.length && n > 0;
+      $('selAll').indeterminate = n > 0 && n < boxes.length;
+      // Nothing has been run yet, so the status line is the call to action.
+      if (!HAS_RUN) {
+        $('status').className = 'status muted';
+        $('status').textContent = n
+          ? `Ready — ${n} book${n > 1 ? 's' : ''} selected. Click “Run backtest”.`
+          : 'Select at least one strategy, then click “Run backtest”.';
+      }
+    }
+
+    function collect() {
+      const gd = +$('max_depth').value || 0;   // 0 = blank = each book's own
+      const strategies = [...document.querySelectorAll('#stratList [data-sid]')]
+        .filter((b) => b.checked)
+        .map((b) => {
+          const id = b.dataset.sid;
+          const filters = {};
+          for (const el of document.querySelectorAll(`[data-f^="${id}|"]`))
+            filters[el.dataset.f.split('|')[1]] = el.type === 'checkbox' ? el.checked : el.value;
+          return {
+            id,
+            preset: document.querySelector(`[data-preset="${id}"]`).value,
+            max_depth: gd ? null : +document.querySelector(`[data-depth="${id}"]`).value,
+            target: +document.querySelector(`[data-target="${id}"]`).value,
+            filters,
+          };
+        });
+      return {
+        strategies, interval: market(), mode: MODE,
+        start: $('start').value, end: $('end').value, by: $('by').value,
+        fee: +$('fee').value, fee_model: $('fee_model').value,
+        max_depth: gd || 1,     // only read for a book that sends none, i.e. when gd is set
+        max_price: +$('max_price').value,
+        entry_el: +$('entry_el').value, price: $('price').value,
+        use_book: $('use_book').checked,
+      };
+    }
+
+    function card(k, v, sub, cls = '') {
+      return `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${v}</div>` +
+             (sub ? `<div class="sub">${sub}</div>` : '') + '</div>';
+    }
+
+    function render(d) {
+      const s = d.stats, x = d.execution;
+      const shared = x.mode === 'one_per_window';
+      $('stats').innerHTML = [
+        card('Chains', s.chains || 0, `${d.runs.length} book${d.runs.length > 1 ? 's' : ''} · ${s.signals_filtered_out || 0} filtered` +
+             (shared ? ` · ${s.signals_yielded || 0} yielded` : '')),
+        card('Chain win rate', `${s.chain_win_rate || 0}%`, `${s.chains_won || 0} won · ${s.chains_busted || 0} bust`),
+        card('Bets', s.bets || 0, `hit ${s.bet_hit_rate || 0}%`),
+        card('Total P/L', plus(s.total_pnl || 0), `per chain ${plus(s.pnl_per_chain || 0, 4)}`, sign(s.total_pnl)),
+        card('ROI on staked', `${plus(s.roi_on_staked_pct || 0)}%`, `staked ${(s.total_staked || 0).toFixed(0)}`, sign(s.roi_on_staked_pct)),
+        card('Max drawdown', (s.max_drawdown || 0).toFixed(2), `worst chain ${(s.worst_chain_pnl || 0).toFixed(2)}`, 'neg'),
+        card('Peak capital', (s.peak_chain_exposure || 0).toFixed(2), shared ? 'deepest chain, one account' : 'sum of book peaks'),
+      ].join('');
+
+      line.setData((d.equity || []).map((p) => ({ time: p.time, value: p.value })));
+      chart.timeScale().fitContent();
+
+      // Per-rung is per book: ladders of different depths must not be merged
+      // into one row, so the table stacks the books under their own headers.
+      $('rungs').tBodies[0].innerHTML = d.runs.map((r) => {
+        const hrs = r.config.hours ? `${r.config.hours.length}h` : 'all hours';
+        const head = `<tr class="runrow"><td class="s" colspan="6">${r.id} · ${r.preset}` +
+          ` — D${r.config.max_depth}, ${hrs} · ${plus(r.stats.total_pnl || 0)}` +
+          ` on ${r.stats.chains || 0} chains</td></tr>`;
+        // Edge against the fee-inclusive breakeven, so a 7% taker fee shows as
+        // the ~1.7pp it costs rather than being hidden behind the raw fill.
+        const be = (p) => x.fee_model === 'taker' ? p + x.fee * p * (1 - p) : p + x.fee * (1 - p);
+        return head + (r.rungs || []).map((y) => {
+          const edge = y.hit_rate - 100 * be(y.avg_price);
+          return `<tr><td>${y.depth}</td><td>${y.bets}</td><td>${y.hit_rate.toFixed(2)}%</td>` +
+            `<td>${y.avg_price.toFixed(4)}</td><td class="${sign(edge)}">${plus(edge)}pp</td>` +
+            `<td>${y.avg_cost.toFixed(3)}</td></tr>`;
+        }).join('');
+      }).join('');
+
+      const cs = (d.chains || []).slice().reverse();   // newest first
+      $('chains').tBodies[0].innerHTML = cs.map((c) => `
+        <tr>
+          <td>${new Date(c.start_ts * 1000).toISOString().slice(0, 16).replace('T', ' ')}</td>
+          <td class="${c.side === 'UP' ? 'long' : 'short'}">${c.side}</td>
+          <td>${c.rungs.length}${c.outcome === 'won' ? '' : ' ' + c.outcome[0].toUpperCase()}</td>
+          <td>${c.rungs.map((r) => r.price.toFixed(3)).join(' → ')}</td>
+          <td>${c.staked.toFixed(2)}</td>
+          <td class="${sign(c.pnl)}">${plus(c.pnl)}</td>
+        </tr>`).join('');
+      $('chainCount').textContent = d.chains_total > cs.length
+        ? `newest ${cs.length} of ${d.chains_total}` : `${cs.length}`;
+
+      const rows = d.periods || [];
+      $('periodTitle').textContent = `By ${x.by}`;
+      $('periods').tBodies[0].innerHTML = rows.map((r) => `
+        <tr class="${r.pnl <= 0 ? 'redrow' : ''}">
+          <td>${r.period}</td><td>${r.chains}</td><td>${r.busts}</td><td>${r.bets}</td>
+          <td>${r.hit_rate.toFixed(1)}%</td><td>${r.staked.toFixed(2)}</td>
+          <td class="${sign(r.pnl)}">${plus(r.pnl)}</td>
+          <td class="${sign(r.cum)}">${plus(r.cum)}</td>
+          <td class="${r.drawdown < 0 ? 'neg' : ''}">${r.drawdown.toFixed(2)}</td>
+          <td class="${sign(r.worst_chain)}">${r.worst_chain.toFixed(2)}</td>
+        </tr>`).join('');
+      const green = rows.filter((r) => r.pnl > 0).length;
+      $('periodSummary').textContent = rows.length
+        ? `${green}/${rows.length} green (${Math.round(100 * green / rows.length)}%)` : '';
+
+      const books = d.runs.map((r) => `${r.id} D${r.config.max_depth}` +
+        (r.config.hours ? ` ${r.config.hours.length}h` : '')).join(' · ');
+      $('status').className = 'status muted';
+      $('status').textContent =
+        `${x.market} · ${books} — ${(MODES[x.mode] || MODES.independent).short} · ` +
+        `fee ${(x.fee * 100).toFixed(0)}% ${x.fee_model} · ` +
+        `entry +${x.entry_el}s (${x.price})` +
+        (x.use_book ? ` · ladder ${d.book_windows} windows` : '') +
+        ` — ${fmtDay(d.range.from)} … ${fmtDay(d.range.to)} · ` +
+        `${d.windows.toLocaleString()} resolved+quoted windows`;
+    }
+
+    async function run() {
+      HAS_RUN = true;
+      $('status').className = 'status busy';
+      $('status').textContent = 'Running…';
+      $('run').disabled = true;
+      try {
+        const r = await fetch('/api/pm_backtest', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(collect()),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || r.statusText);
+        render(d);
+      } catch (e) {
+        $('status').className = 'status error';
+        $('status').textContent = 'Error: ' + e.message;
+      } finally { syncStrategies(); }
+    }
+
+    /** Switch the page to one market: its playbooks, its date range, its fee.
+        A result on screen belongs to the other market, so the idle prompt
+        comes back rather than the Breakdown control re-running it. */
+    function setMarket() {
+      const m = market(), info = MARKETS[m] || MARKETS['5m'];
+      HAS_RUN = false;
+      $('brandSub').textContent = info.label;
+      $('proxyPct').textContent = info.proxy;
+      $('entry_el').max = info.window - 1;
+      if (+$('entry_el').value >= info.window) $('entry_el').value = 5;
+      $('fee_model').value = info.fee_model;
+      $('fee').value = info.fee;
+      renderStrategies(SCHEMA.strategies || [], SCHEMA.filters || []);
+      const cov = (SCHEMA.coverage || {})[m] || {};
+      if (cov.from && cov.to) {
+        // Default to the last 6 months of the record (the whole record on 15m).
+        const to = cov.to, from = Math.max(cov.from, to - 183 * 86400);
+        $('start').value = fmtDay(from);
+        $('end').value = fmtDay(to);
+        $('start').min = $('end').min = fmtDay(cov.from);
+        $('start').max = $('end').max = fmtDay(cov.to);
+        $('coverage').textContent =
+          `Polymarket ${m} record: ${fmtDay(cov.from)} … ${fmtDay(cov.to)}. ` + info.coverage;
+      } else {
+        $('start').value = $('end').value = '';
+        $('coverage').textContent = `No resolved Polymarket ${m} windows in the DB.`;
+      }
+    }
+
+    async function boot() {
+      initChart();
+      const r = await fetch('/api/pm_backtest/schema');
+      SCHEMA = await r.json();
+      const markets = SCHEMA.markets || ['5m'];
+      $('market').innerHTML = markets.map((m) =>
+        `<option value="${m}">${m} BTC up/down</option>`).join('');
+      $('market').value = markets.includes('5m') ? '5m' : markets[0];
+      $('market').onchange = () => { setMarket(); syncDepth(); };
+      setMarket();
+      $('max_depth').oninput = syncDepth;
+      syncDepth();
+      $('run').onclick = run;
+      // Re-render an existing result at the new granularity, but never start the
+      // first run off a dropdown the user may only be setting up.
+      $('by').onchange = () => { if (HAS_RUN) run(); };
+      for (const b of document.querySelectorAll('.modeswitch [data-mode]'))
+        b.onclick = () => { if (b.dataset.mode !== MODE) setMode(b.dataset.mode); };
+      setMode(MODE, false);
+      syncStrategies();          // paints the "Ready — N books" prompt
+    }
+    boot();
+  </script>
+</body>
+</html>

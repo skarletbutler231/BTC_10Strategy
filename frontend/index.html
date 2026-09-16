@@ -30,10 +30,18 @@
       <label id="oddsWrap" style="display:none">Odds
         <input id="odds" type="number" value="0.50" step="0.01" min="0.01" max="0.99" size="5" />
       </label>
+      <label title="Basis for every time on this page: the chart axis, the crosshair, the trade table, and the Start/End dates. UTC matches Binance's candle grid and the backend; Local uses this browser's timezone.">Times
+        <select id="tz">
+          <option value="utc" selected>UTC</option>
+          <option value="local">Local</option>
+        </select>
+      </label>
       <label>Start <input id="start" type="date" /></label>
       <label>End <input id="end" type="date" /></label>
+      <span id="tzNote" class="muted small" title="The timezone Start and End are read in.">UTC</span>
       <button id="loadBtn" class="ghost">Load chart</button>
       <button id="runBtn" class="primary">Run backtest</button>
+      <a href="/pm-backtest" class="ghost" style="text-decoration:none;padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)">Polymarket →</a>
       <a href="/pm-edge" class="ghost" style="text-decoration:none;padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)">PM Edge →</a>
     </div>
   </header>
@@ -113,7 +121,7 @@
           <table id="trades">
             <thead>
               <tr>
-                <th>#</th><th>Side</th><th>Entry time</th><th>Entry</th>
+                <th>#</th><th>Side</th><th id="thEntryTime">Entry time</th><th>Entry</th>
                 <th>Exit</th><th>Exit type</th><th>PnL %</th><th>Bars</th><th>Reason</th>
               </tr>
             </thead>

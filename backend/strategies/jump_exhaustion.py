@@ -393,3 +393,44 @@ PRESETS: dict = {
         "vol_atr_length": 20, "atr_pct_min": 0.0, "atr_pct_max": 20.0,
     },
 }
+
+
+PRESETS.update({
+    # --- Polymarket 15m, fitted on the trailing 2 years with a holdout -----
+    # Swept by backend/data/pm_preset_sweep.py (interval 15m). TRAIN 2024-09-13 ->
+    # 2025-12-13 is where selection happened; HOLDOUT 2025-12-13 -> 2026-09-13 was
+    # scored once after the picks were frozen; 2017-08 -> 2024-09 was never loaded
+    # by the sweep. Tiers are bands of train bets (Volume >= 1,200, Balanced
+    # 500-1,199, Selective 200-499); admission needs both train halves >= 52% and
+    # train z >= 2.5; the pick is the best train hit rate less one standard error.
+    # Flat $1 per bet, next-candle direction:
+    #
+    #   preset     bets    hit     z | unswept 17-24 | train (h1/h2)     HOLDOUT | worst yr
+    #   Volume    20,627  56.51% +18.7 | 15,977  56.41% | 56.57% (56.4/56.8) 1,774  57.27% | 51.4% (2017)
+    #   Balanced   7,773  54.28%  +7.5 |  6,261  53.63% | 56.48% (55.7/57.6)   602  57.64% | 51.4% (2021)
+    #   Selective  2,442  55.69%  +5.6 |  1,844  54.45% | 60.36% (60.2/60.5)   265  58.49% | 48.4% (2019)
+    #
+    # Fade a 1.3-2.5 ATR jump with the RSI confirming (7-bar, 30/70 or 35/65).
+    # All three hold out of sample (57.3 / 57.6 / 58.5%). No Saturday gate here:
+    # the day-of-week axis was not swept on 15m.
+    # *** THE PICK. *** 20,627 bets over the whole record at 56.51% (z +18.7);
+    # the 5m 'PM 5m Volume' settings with a 20-bar ATR and 7-bar RSI.
+    "PM 15m Volume": {
+        "atr_length": 20, "atr_pct_max": 20.0, "atr_pct_min": 0.0,
+        "close_extreme_min": 0.0, "jump1_atr_mult": 1.3, "jump2_atr_mult": 3.0,
+        "rsi_length": 7, "rsi_overbought": 70, "rsi_oversold": 30,
+        "wick_min_ratio": 0.0,
+    },
+    "PM 15m Balanced": {
+        "atr_length": 14, "atr_pct_max": 3.0, "atr_pct_min": 0.2,
+        "close_extreme_min": 0.0, "jump1_atr_mult": 1.8, "jump2_atr_mult": 3.0,
+        "rsi_length": 7, "rsi_overbought": 70, "rsi_oversold": 30,
+        "wick_min_ratio": 0.0,
+    },
+    "PM 15m Selective": {
+        "atr_length": 30, "atr_pct_max": 20.0, "atr_pct_min": 0.0,
+        "close_extreme_min": 0.6, "jump1_atr_mult": 2.5, "jump2_atr_mult": 3.0,
+        "rsi_length": 7, "rsi_overbought": 65, "rsi_oversold": 35,
+        "wick_min_ratio": 0.0,
+    },
+})
