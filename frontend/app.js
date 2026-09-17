@@ -14,6 +14,7 @@ let TZ = 'utc';            // 'utc' | 'local' — basis for every time shown
 let LAST_TRADES = null;    // last table + chart payload, re-rendered when the
 let LAST_CANDLES = null;   // basis flips, so a flip never refetches
 let LAST_MARKERS = [];
+let SYMBOLS = {};          // symbol -> {min, max, count} 1m coverage from /api/symbols
 
 /* ---------- time basis ----------
    Candle times stay real UTC seconds everywhere — in the series data, in the
@@ -387,7 +388,7 @@ function dayBounds(v, end) {
 
 function q() {
   return {
-    symbol: $('symbol').value.trim() || 'BTCUSDT',
+    symbol: $('symbol').value || 'BTCUSDT',
     interval: $('interval').value,
     start: dayBounds($('start').value, false),
     end: dayBounds($('end').value, true),
@@ -464,6 +465,45 @@ function applyModeUI() {
   }
 }
 
+/* ---------- symbols ----------
+   The dropdown is built from /api/symbols so adding a pair is a backend-only
+   change (SYMBOLS in main.py), the same way strategies come from the schema.
+   The note beside it shows how far back the DB goes for the chosen symbol,
+   since each pair was ingested from a different start month. */
+const isoDay = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+
+function showSymbolCoverage() {
+  const cov = SYMBOLS[$('symbol').value];
+  $('symNote').textContent = cov && cov.count
+    ? `DB ${isoDay(cov.min)} → ${isoDay(cov.max)}`
+    : (cov ? 'not in DB — live API only' : '');
+}
+
+async function loadSymbols() {
+  const sel = $('symbol');
+  let saved = null;
+  try { saved = localStorage.getItem('symbol'); } catch (e) { /* private mode */ }
+  try {
+    const { symbols } = await api('/api/symbols');
+    if (symbols && symbols.length) {
+      sel.innerHTML = '';
+      for (const s of symbols) {
+        SYMBOLS[s.symbol] = s;
+        const o = document.createElement('option');
+        o.value = s.symbol; o.textContent = s.symbol;
+        sel.appendChild(o);
+      }
+    }
+  } catch (e) { /* older backend: keep the static BTCUSDT option */ }
+  if (saved && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+  showSymbolCoverage();
+}
+
+function setSymbol(sym) {
+  try { localStorage.setItem('symbol', sym); } catch (e) { /* private mode */ }
+  showSymbolCoverage();
+}
+
 /* ---------- init ---------- */
 function defaultDates() {
   const end = new Date();
@@ -513,7 +553,7 @@ async function init() {
   initChart();
   applyTz();
   defaultDates();
-  const { strategies } = await api('/api/strategies');
+  const [{ strategies }] = await Promise.all([api('/api/strategies'), loadSymbols()]);
   const sel = $('strategy');
   for (const s of strategies) {
     CATALOG[s.id] = s;
@@ -546,6 +586,7 @@ async function init() {
   $('preset').onchange = () => applyPreset(CATALOG[sel.value], $('preset').value);
   $('mode').onchange = applyModeUI;
   $('tz').onchange = (e) => setTz(e.target.value);
+  $('symbol').onchange = (e) => setSymbol(e.target.value);
   $('runBtn').onclick = runBacktest;
   $('loadBtn').onclick = loadChart;
 

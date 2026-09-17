@@ -12,6 +12,13 @@
 #   */30 * * * * <proj>/run_updaters.sh binance   >> <proj>/data/binance_ingest.log 2>&1
 #   40 1 * * *   <proj>/run_updaters.sh pmdata    >> <proj>/data/pmdata_ingest.log 2>&1
 #
+# The two binance jobs take their symbol list and archive start from the
+# environment (inline or .env), so one checkout can maintain a second symbol
+# without touching the checkout that owns BTCUSDT — e.g. to keep ETHUSDT current:
+#
+#   */30 * * * * BINANCE_SYMBOLS=ETHUSDT <proj>/run_updaters.sh binance   >> <proj>/data/binance_ingest_eth.log 2>&1
+#   * * * * *    BINANCE_SYMBOLS=ETHUSDT <proj>/run_updaters.sh binance1m >> <proj>/data/binance_1m_tail_eth.log 2>&1
+#
 # Jobs:
 #   stream     Chainlink BTCUSD_CL candles + Polymarket pm_window/pm_quote,
 #              tailed from the pmqb capture (backend.data.ingest_stream).
@@ -23,14 +30,17 @@
 #              stored second to now (backend.data.binance_1s_stream --backfill-only).
 #              Per-minute rather than a daemon, so it needs no supervision; the
 #              cost is that the 1s series trails now by up to ~a minute.
-#   binance    Binance BTCUSDT 1m candles from data.binance.vision (backend.data.ingest).
-#              Archive-only, so it necessarily stops at YESTERDAY 23:59 — the vision archive
-#              publishes a day only once it has closed.
+#   binance    Binance 1m candles from data.binance.vision (backend.data.ingest) for
+#              BINANCE_SYMBOLS (default BTCUSDT) from BINANCE_FROM (default 2017-08; a
+#              rolling '2y' keeps the latest two years). Archive-only, so it necessarily
+#              stops at YESTERDAY 23:59 — the vision archive publishes a day only once
+#              it has closed.
 #   binance1m  The other half of that: REST-fills today's still-forming 1m candles
-#              (backend.data.ingest --tail). backend/store.py already splices this tail on at
-#              read time, but anything querying the `candles` table directly bypasses that and
-#              would see the table end at yesterday 23:59. Cheap (one REST call, no-op when
-#              current), and shares the binance lock so it can't race the archive loader.
+#              (backend.data.ingest --tail) for the same BINANCE_SYMBOLS. backend/store.py
+#              already splices this tail on at read time, but anything querying the `candles`
+#              table directly bypasses that and would see the table end at yesterday 23:59.
+#              Cheap (one REST call per symbol, no-op when current), and shares the binance
+#              lock so it can't race the archive loader.
 #   pmdata     Polymarket L2 order book from pmdata.dev (backend.data.ingest_pmdata).
 #              Daily, not per-minute: PMData publishes one archive per day once the
 #              day has closed, so this picks up yesterday and is a no-op otherwise.
@@ -38,14 +48,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Remember inline overrides so .env can't clobber them (same rule as run.sh).
+_inline_symbols="${BINANCE_SYMBOLS:-}"
+_inline_from="${BINANCE_FROM:-}"
+
 # Load .env so MARKET_DB / STREAM_FILE apply under cron's bare environment.
 if [[ -f .env ]]; then
   set -a; # shellcheck disable=SC1091
   source .env; set +a
 fi
 
+BINANCE_SYMBOLS="${_inline_symbols:-${BINANCE_SYMBOLS:-BTCUSDT}}"
+BINANCE_FROM="${_inline_from:-${BINANCE_FROM:-2017-08}}"
+
 STREAM_LOCK=/tmp/btc10_ingest_stream.lock
-BINANCE_LOCK=/tmp/btc10_binance_ingest.lock
+# Keyed by symbol set: the BTCUSDT jobs of one checkout must not make another
+# checkout's ETHUSDT jobs skip every minute (flock -n) just because the two fire
+# on the same tick. Concurrent writers to market.db are fine (WAL + busy timeout).
+BINANCE_LOCK="/tmp/btc10_binance_ingest_${BINANCE_SYMBOLS//[^A-Za-z0-9]/_}.lock"
 PMDATA_LOCK=/tmp/btc10_pmdata_ingest.lock
 # Its own lock, not the stream lock: the two read the same file but write different
 # tables, and a slow TWAP backfill must not stall the per-minute pm_quote tail.
@@ -69,9 +89,11 @@ case "${1:-all}" in
     exec /usr/bin/flock -n "$BINANCE1S_LOCK" \
       python3 -m backend.data.binance_1s_stream --backfill-only --no-lock ;;
   binance)
-    exec /usr/bin/flock -n "$BINANCE_LOCK" python3 -m backend.data.ingest ;;
+    exec /usr/bin/flock -n "$BINANCE_LOCK" \
+      python3 -m backend.data.ingest --symbol "$BINANCE_SYMBOLS" --from "$BINANCE_FROM" ;;
   binance1m)
-    exec /usr/bin/flock -n "$BINANCE_LOCK" python3 -m backend.data.ingest --tail ;;
+    exec /usr/bin/flock -n "$BINANCE_LOCK" \
+      python3 -m backend.data.ingest --symbol "$BINANCE_SYMBOLS" --tail ;;
   pmdata)
     exec /usr/bin/flock -n "$PMDATA_LOCK" python3 -m backend.data.ingest_pmdata "${pmdata_args[@]}" ;;
   all)
@@ -80,8 +102,10 @@ case "${1:-all}" in
     /usr/bin/flock -n "$TWAP_LOCK"    python3 -m backend.data.ingest_twap || true
     /usr/bin/flock -n "$BINANCE1S_LOCK" \
       python3 -m backend.data.binance_1s_stream --backfill-only --no-lock || true
-    /usr/bin/flock -n "$BINANCE_LOCK" python3 -m backend.data.ingest || true
-    /usr/bin/flock -n "$BINANCE_LOCK" python3 -m backend.data.ingest --tail || true
+    /usr/bin/flock -n "$BINANCE_LOCK" \
+      python3 -m backend.data.ingest --symbol "$BINANCE_SYMBOLS" --from "$BINANCE_FROM" || true
+    /usr/bin/flock -n "$BINANCE_LOCK" \
+      python3 -m backend.data.ingest --symbol "$BINANCE_SYMBOLS" --tail || true
     /usr/bin/flock -n "$PMDATA_LOCK"  python3 -m backend.data.ingest_pmdata "${pmdata_args[@]}" || true ;;
   *)
     echo "usage: $0 {stream|twap|binance1s|binance|binance1m|pmdata|all}" >&2; exit 2 ;;

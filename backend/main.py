@@ -27,6 +27,15 @@ from .engine import EXIT_PARAM_GROUP, run_backtest
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
+# Symbols offered in the dashboard's Symbol dropdown, in display order. Each
+# must be ingested into the shared DB (python3 -m backend.data.ingest --symbol X)
+# and listed in .env BINANCE_SYMBOLS so cron keeps it current; the store falls
+# back to the live Binance API for anything not in the DB, but that path is
+# capped at 60k 1m bars. Every preset in backend/strategies was fitted on
+# BTCUSDT — they run unchanged on the other symbols (all thresholds are ATR- or
+# %-relative) but carry no evidence there until re-fitted.
+SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+
 app = FastAPI(title="BTC 10-Strategy Backtester")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
@@ -117,6 +126,12 @@ def coverage(symbol: str = "BTCUSDT"):
     cov = store.coverage(symbol)
     return {"symbol": symbol.upper(), "interval": "1m",
             "db_enabled": store.use_db(), **cov}
+
+
+@app.get("/api/symbols")
+def list_symbols():
+    """Symbols for the dashboard dropdown, each with its ingested 1m coverage."""
+    return {"symbols": [{"symbol": sym, **store.coverage(sym)} for sym in SYMBOLS]}
 
 
 @app.get("/api/strategies")

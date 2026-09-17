@@ -11,9 +11,10 @@
   <header class="topbar">
     <div class="brand">₿ <strong>BTC 10-Strategy</strong> <span class="muted">Backtester</span></div>
     <div class="top-controls">
-      <label>Symbol
-        <input id="symbol" value="BTCUSDT" size="9" />
+      <label title="Binance spot pair. The list comes from the backend (SYMBOLS in backend/main.py); every preset was fitted on BTCUSDT and runs unchanged on the others.">Symbol
+        <select id="symbol"><option>BTCUSDT</option></select>
       </label>
+      <span id="symNote" class="muted small" title="1m candles ingested in the local DB for this symbol. Dates outside this range are fetched live from Binance (capped at 60k bars)."></span>
       <label>Interval
         <select id="interval">
           <option>1m</option><option>3m</option><option selected>5m</option>

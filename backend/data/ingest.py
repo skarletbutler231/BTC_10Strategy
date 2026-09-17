@@ -18,6 +18,15 @@ Usage:
     python -m backend.data.ingest --symbol BTCUSDT --interval 1m --from 2017-08 --to now
     python -m backend.data.ingest --from 2024-01 --to 2024-03        # a slice
     python -m backend.data.ingest --force                            # re-load everything
+    python -m backend.data.ingest --symbol ETHUSDT --from 2017-08    # a second symbol, full history
+    python -m backend.data.ingest --symbol ETHUSDT --from 2y         # rolling last 2 years
+    python -m backend.data.ingest --symbol BTCUSDT,ETHUSDT --tail    # REST-fill today only
+
+``--symbol`` takes one or more symbols (comma/space separated) and ``--from``
+accepts either an absolute 'YYYY-MM' or a relative '<N>y' / '<N>m' that is
+resolved against today each run, so a cron job can keep a rolling window
+without anyone editing the date. Symbols are independent rows in ``candles``
+and ``ingest_log`` (both keyed by symbol), so adding one never touches another.
 
 Note on timestamps: Binance switched the archive from millisecond to
 microsecond precision in 2025. ``_to_seconds`` normalises any unit to unix
@@ -76,6 +85,36 @@ def _month_iter(start_ym: str, end_ym: str):
         if m > 12:
             m = 1
             y += 1
+
+
+def resolve_start(spec: str, today: date) -> str:
+    """'YYYY-MM' passes through; '<N>y' / '<N>m' -> the month N years/months before ``today``.
+
+    Month-aligned so the result always names a whole archive partition: with
+    today 2026-09-14, '2y' -> '2024-09' and '18m' -> '2025-03'.
+    """
+    spec = spec.strip().lower()
+    if spec.endswith(("y", "m")) and spec[:-1].isdigit():
+        months = int(spec[:-1]) * (12 if spec.endswith("y") else 1)
+        idx = today.year * 12 + (today.month - 1) - months
+        return f"{idx // 12:04d}-{idx % 12 + 1:02d}"
+    try:
+        datetime.strptime(spec, "%Y-%m")
+    except ValueError:
+        raise IngestError(f"--from must be YYYY-MM or <N>y/<N>m, got {spec!r}") from None
+    return spec
+
+
+def parse_symbols(spec: str) -> "list[str]":
+    """'BTCUSDT,ETHUSDT' or 'BTCUSDT ETHUSDT' -> ['BTCUSDT', 'ETHUSDT'] (upper-cased, de-duplicated)."""
+    out: "list[str]" = []
+    for sym in spec.replace(",", " ").split():
+        sym = sym.upper()
+        if sym not in out:
+            out.append(sym)
+    if not out:
+        raise IngestError("no symbol given")
+    return out
 
 
 # ---- download + verify ------------------------------------------------------
@@ -233,6 +272,7 @@ def run(symbol: str, interval: str, start_ym: str, end_ym: str, *,
     now = datetime.now(timezone.utc)
     today = now.date()
     now_ts = int(now.timestamp())
+    start_ym = resolve_start(start_ym, today)
     if end_ym == "now":
         end_ym = f"{today.year:04d}-{today.month:02d}"
 
@@ -332,10 +372,12 @@ def coverage(symbol: str, interval: str, *, db_path=None):
 
 def _cli(argv=None):
     ap = argparse.ArgumentParser(description="Ingest Binance klines into SQLite.")
-    ap.add_argument("--symbol", default="BTCUSDT")
+    ap.add_argument("--symbol", default="BTCUSDT",
+                    help="one or more symbols, comma/space separated (e.g. 'BTCUSDT,ETHUSDT')")
     ap.add_argument("--interval", default="1m",
                     help="only 1m is used by the platform; others are resampled on read")
-    ap.add_argument("--from", dest="start", default="2017-08", help="YYYY-MM")
+    ap.add_argument("--from", dest="start", default="2017-08",
+                    help="YYYY-MM, or a rolling '<N>y' / '<N>m' back from today (e.g. '2y')")
     ap.add_argument("--to", dest="end", default="now", help="YYYY-MM or 'now'")
     ap.add_argument("--db", default=None, help="override DB path (else MARKET_DB / data/market.db)")
     ap.add_argument("--force", action="store_true", help="re-load partitions already logged")
@@ -345,11 +387,12 @@ def _cli(argv=None):
                     help="with --tail, how far back to reach if the table is far behind")
     args = ap.parse_args(argv)
     try:
-        if args.tail:
-            tail(args.symbol, args.interval, db_path=args.db, max_hours=args.tail_max_hours)
-            return 0
-        run(args.symbol, args.interval, args.start, args.end,
-            db_path=args.db, force=args.force)
+        for symbol in parse_symbols(args.symbol):
+            if args.tail:
+                tail(symbol, args.interval, db_path=args.db, max_hours=args.tail_max_hours)
+            else:
+                run(symbol, args.interval, args.start, args.end,
+                    db_path=args.db, force=args.force)
     except IngestError as e:
         print(f"ingest error: {e}", file=sys.stderr)
         return 1

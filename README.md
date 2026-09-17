@@ -91,12 +91,39 @@ python3 -m backend.data.ingest --symbol BTCUSDT --interval 1m --from 2017-08 --t
 
 python3 -m backend.data.ingest --from 2024-01 --to 2024-06    # just a slice
 python3 -m backend.data.ingest --force                         # re-load everything
+python3 -m backend.data.ingest --symbol ETHUSDT --from 2017-08 # a second symbol, full history
+python3 -m backend.data.ingest --symbol BTCUSDT,ETHUSDT --tail # REST-fill today for both
 ```
 
 Ingestion is **idempotent and resumable**: completed months are logged and
 skipped, so re-running only fetches what's new (schedule it via cron to stay
 current). The current month — not yet published as a monthly zip — is pulled from
-Binance's daily archives automatically.
+Binance's daily archives automatically. `--symbol` takes a comma-separated list,
+and `--from` also accepts a rolling `2y` / `18m` resolved against today.
+
+### Symbols
+
+The dashboard's **Symbol** dropdown offers `BTCUSDT`, `ETHUSDT` and `SOLUSDT`,
+each with its full Binance 1m history in the shared DB — BTC and ETH from
+2017-08-17, SOL from its 2020-08-11 listing — and the note beside the dropdown
+shows the ingested range for whichever is selected. Every
+part of the pipeline is keyed by symbol — the `candles` and `ingest_log` tables,
+the resampler, the live tail, the backtest request — so a second pair is just
+more rows, and a backtest on ETHUSDT is the same code path as on BTCUSDT.
+
+To add another pair: ingest it once (`python3 -m backend.data.ingest --symbol
+XRPUSDT --from 2017-08` — months before the pair's listing 404 and are
+skipped), append it to `SYMBOLS` in `backend/main.py` (the
+dropdown is built from `GET /api/symbols`), and add it to `BINANCE_SYMBOLS` in
+`.env` so the cron jobs keep it current. A symbol not in the DB still works —
+the store falls back to the live API — but that path is capped at 60k 1m bars.
+
+> Every preset in this README was **fitted on BTCUSDT**. The strategies are
+> all ATR- or %-relative, so the presets run unchanged on ETH and SOL (a first
+> 6-month check of *RSI + BB · PM 15m Balanced* on ETH 15m, 2026-03-17 →
+> 2026-09-17: 1,773 bets, 58.5% hit, vs 1,795 / 56.9% on BTC), but they
+> carry no out-of-sample evidence there until re-fitted under the same
+> protocol as the [15-minute presets](#15-minute-presets-fitted-on-the-latest-six-months).
 
 Reads are a **hybrid**: history comes from the DB; if a request runs past the
 newest ingested candle (e.g. today, before the next ingest), the tail is fetched
@@ -193,6 +220,12 @@ and slow jobs run at their own cadences without ever colliding:
 */30 * * * * <proj>/run_updaters.sh binance   >> <proj>/data/binance_ingest.log 2>&1
 40 1 * * *   <proj>/run_updaters.sh pmdata    >> <proj>/data/pmdata_ingest.log 2>&1
 ```
+
+The `binance` / `binance1m` jobs read `BINANCE_SYMBOLS` (default `BTCUSDT`) and
+`BINANCE_FROM` (default `2017-08`) from `.env` or inline, so one line keeps
+several pairs current — `BINANCE_SYMBOLS=BTCUSDT,ETHUSDT` — and a second
+checkout can own a different symbol set without colliding (the lock is keyed by
+symbol set).
 
 Read the data back with `backend/pm_store.py`: `coverage()`, `windows(lo, hi)`,
 `quotes(start_ts)`, and `quote_at(start_ts, elapsed)` — the last returns the YES
@@ -456,8 +489,8 @@ scripts that produced these numbers are research artifacts, not in the repo.
 
 ## Using the dashboard
 
-1. Pick a **strategy**, **symbol** (default `BTCUSDT`), **interval**, and a
-   **start / end** date range.
+1. Pick a **strategy**, **symbol** (`BTCUSDT`, `ETHUSDT` or `SOLUSDT` — see
+   [Symbols](#symbols)), **interval**, and a **start / end** date range.
 2. Adjust parameters in the sidebar, or load a named **preset**
    (Default / Aggressive / Conservative).
 3. **Run backtest** → fetches candles, generates signals, simulates trades, and
